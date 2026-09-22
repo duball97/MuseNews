@@ -33,7 +33,7 @@ export default async function HomePage() {
     }
   }
 
-  const excludeIds = [...new Set([...latest, ...opinions].map((a) => a.id))];
+  const excludeIds = Array.from(new Set([...latest, ...opinions].map((a) => a.id)));
 
   return (
     <div className="sheet">
