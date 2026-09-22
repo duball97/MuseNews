@@ -25,6 +25,7 @@ export async function GET(request: Request) {
       url: `${site}/news/${a.slug}`,
       body: a.body,
       cover_url: a.cover_url,
+      author_avatar_url: a.author_avatar_url || null,
       source_authors: a.source_authors,
       source_channels: a.source_channels,
     })),

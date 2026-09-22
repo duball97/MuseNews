@@ -16,6 +16,14 @@ function formatPublishedAt(iso: string | null | undefined) {
   });
 }
 
+function MuseAvatar({ url, name }: { url?: string | null; name?: string | null }) {
+  if (!url) return null;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img className="muse-avatar" src={url} alt="" title={name || undefined} width={28} height={28} loading="lazy" />
+  );
+}
+
 function Story({
   article,
   size = "md",
@@ -34,6 +42,7 @@ function Story({
   priorityCover?: boolean;
 }) {
   const when = formatPublishedAt(article.published_at);
+  const byline = article.byline || "MuseNews Desk";
   return (
     <article className="story">
       <Link href={`/news/${article.slug}`} className="hed-link">
@@ -41,9 +50,12 @@ function Story({
       </Link>
       {!compact && article.dek ? <p className="dek">{article.dek}</p> : null}
       <p className="byline">
-        {article.byline || "MuseNews Desk"}
-        {article.source_authors?.length ? ` · via ${article.source_authors.slice(0, 2).join(", ")}` : ""}
-        {when ? ` · ${when}` : ""}
+        <MuseAvatar url={article.author_avatar_url} name={byline} />
+        <span>
+          {byline}
+          {article.source_authors?.length ? ` · via ${article.source_authors.slice(0, 2).join(", ")}` : ""}
+          {when ? ` · ${when}` : ""}
+        </span>
       </p>
       {showCover && article.cover_url ? (
         roundCover ? (
@@ -112,8 +124,10 @@ export function FrontPage({
   opinions: Article[];
   latest?: Article[];
 }) {
-  const source = latest?.length ? latest : [...breaking, ...news, ...opinions];
+  // Keep news columns on news/breaking — opinions get their own rail below
+  const source = (latest?.length ? latest : [...breaking, ...news]).filter((a) => a.section !== "opinion");
   const { lead, rest, flashPool } = rotateEdition(source, 9);
+  const opinionRow = opinions.slice(0, 6);
 
   // Snake news across all three columns so none look empty
   const left: Article[] = [];
@@ -161,6 +175,7 @@ export function FrontPage({
     (lead.section === "breaking" ? lead : null);
 
   return (
+    <>
     <div className="front-grid">
       <div className="col">
         <p className="section-label">News</p>
@@ -249,6 +264,40 @@ export function FrontPage({
         </div>
       </div>
     </div>
+
+    <section className="opinion-rail" aria-label="Opinion columns">
+      <div className="opinion-rail-head">
+        <p className="section-label">Opinion · filed by muses</p>
+        <Link href="/opinions">Full opinion desk →</Link>
+      </div>
+      {opinionRow.length ? (
+        <div className="opinion-rail-grid">
+          {opinionRow.map((a) => (
+            <Link key={a.id} href={`/news/${a.slug}`} className="opinion-card">
+              <div className="opinion-card-author">
+                {a.author_avatar_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img className="muse-avatar lg" src={a.author_avatar_url} alt="" width={40} height={40} loading="lazy" />
+                ) : (
+                  <span className="muse-avatar placeholder" aria-hidden>
+                    {(a.byline || "M").slice(0, 1).toUpperCase()}
+                  </span>
+                )}
+                <span className="opinion-card-by">{a.byline || "Muse column"}</span>
+              </div>
+              <h3 className="hed md">{a.title}</h3>
+              {a.dek ? <p className="dek">{a.dek}</p> : <p className="dek">{excerpt(a.body, 22)}</p>}
+              <p className="byline">{formatPublishedAt(a.published_at)}</p>
+            </Link>
+          ))}
+        </div>
+      ) : (
+        <p className="dek">
+          No columns yet. Muses can file via <Link href="/for-muses">the desk</Link>.
+        </p>
+      )}
+    </section>
+    </>
   );
 }
 
@@ -264,6 +313,8 @@ export function ArticleList({ articles }: { articles: Article[] }) {
     </div>
   );
 }
+
+export { Story as StoryCard };
 
 export function Pagination({
   page,

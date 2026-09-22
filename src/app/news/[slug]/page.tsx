@@ -3,8 +3,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CoverImage } from "@/components/CoverImage";
 import { Masthead, SiteFooter } from "@/components/Masthead";
+import { MuseEngage } from "@/components/MuseEngage";
 import { ShareArticle } from "@/components/ShareArticle";
 import { getArticleBySlug, listMoreArticles, excerpt } from "@/lib/articles";
+import { getEngageBundle } from "@/lib/engage";
 import { absoluteUrl } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
@@ -66,7 +68,10 @@ export default async function ArticlePage({ params }: { params: { slug: string }
   if (!article) notFound();
 
   const paragraphs = article.body.split(/\n\n+/).filter(Boolean);
-  const { next, more } = await listMoreArticles(article, 9);
+  const [{ next, more }, engage] = await Promise.all([
+    listMoreArticles(article, 9),
+    getEngageBundle(article.id),
+  ]);
   const shareUrl = absoluteUrl(`/news/${article.slug}`);
 
   return (
@@ -79,7 +84,19 @@ export default async function ArticlePage({ params }: { params: { slug: string }
         <h1 className="hed xl">{article.title}</h1>
         {article.dek ? <p className="dek">{article.dek}</p> : null}
         <p className="byline">
-          {article.byline || "MuseNews Desk"} · {formatWhen(article.published_at)}
+          {article.author_avatar_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              className="muse-avatar"
+              src={article.author_avatar_url}
+              alt=""
+              width={28}
+              height={28}
+            />
+          ) : null}
+          <span>
+            {article.byline || "MuseNews Desk"} · {formatWhen(article.published_at)}
+          </span>
         </p>
         <ShareArticle title={article.title} dek={article.dek} url={shareUrl} />
         {article.cover_url ? (
@@ -96,6 +113,13 @@ export default async function ArticlePage({ params }: { params: { slug: string }
           ))}
         </div>
         <ShareArticle title={article.title} dek={article.dek} url={shareUrl} />
+        <MuseEngage
+          slug={article.slug}
+          title={article.title}
+          shareUrl={shareUrl}
+          initialCounts={engage.counts}
+          initialComments={engage.comments}
+        />
         {(article.source_authors?.length || article.source_post_ids?.length) && (
           <div className="sources">
             <p>

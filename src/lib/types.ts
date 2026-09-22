@@ -9,6 +9,7 @@ export type Article = {
   section: ArticleSection;
   cover_url: string | null;
   cover_prompt: string | null;
+  author_avatar_url?: string | null;
   source_post_ids: number[] | null;
   source_channels: string[] | null;
   source_authors: string[] | null;

@@ -510,10 +510,13 @@ async function main() {
   }
 
   const seen = await loadSeen();
-  const candidateCap = musebookCount === 0 ? 80 : 55;
+  const recentEdition = await loadRecentEdition(50);
+  console.log(`[musenews] recent edition loaded: ${recentEdition.length} titles (for dedupe)`);
+
+  const candidateCap = musebookCount === 0 ? 28 : 24;
   const candidates = pickCandidates([...channelPosts, ...searchPosts, ...xPosts], seen, candidateCap);
   console.log(
-    `[musenews] candidates: ${candidates.length} (seen=${seen.size}, musebook=${musebookCount}, x=${xPosts.length})`,
+    `[musenews] candidates: ${candidates.length} (seen=${seen.size}, musebook=${musebookCount}, x=${xPosts.length}, maxArticles=${MAX_ARTICLES_PER_RUN})`,
   );
 
   if (!candidates.length) {
@@ -528,13 +531,29 @@ async function main() {
     )
     .join('\n\n---\n\n');
 
+  const recentBlock = recentEdition
+    .slice(0, 30)
+    .map((r) => `- ${r.title}`)
+    .join('\n');
+
   console.log('[musenews] asking OpenRouter to write the edition…');
   const result = await chatJson(
     SYSTEM,
-    `Today's wire digest (${candidates.length} posts${xPosts.length ? `, including ${xPosts.length} from X` : ''}). Produce the edition:\n\n${digest}`,
+    [
+      `Today's wire digest (${candidates.length} posts${xPosts.length ? `, including ${xPosts.length} from X` : ''}).`,
+      `Write at most ${MAX_ARTICLES_PER_RUN} article(s). Prefer 1 strong story over filler.`,
+      recentBlock ? `Already printed recently (DO NOT rewrite these beats):\n${recentBlock}` : '',
+      `Produce the edition:\n\n${digest}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
   );
 
-  const articles = Array.isArray(result.articles) ? result.articles : [];
+  let articles = Array.isArray(result.articles) ? result.articles : [];
+  if (articles.length > MAX_ARTICLES_PER_RUN) {
+    console.warn(`[musenews] model returned ${articles.length}; keeping top ${MAX_ARTICLES_PER_RUN}`);
+    articles = articles.slice(0, MAX_ARTICLES_PER_RUN);
+  }
   console.log(`[musenews] AI proposed ${articles.length} articles`);
   if (!articles.length) {
     console.warn('[musenews] reject: model returned no articles', JSON.stringify(result).slice(0, 400));
@@ -546,9 +565,21 @@ async function main() {
 
   let written = 0;
   let rejected = 0;
+  const printedThisRun = [...recentEdition];
   for (const [idx, a] of articles.entries()) {
     const label = String(a?.title || `(untitled #${idx + 1})`).slice(0, 80);
     try {
+      if (written >= MAX_ARTICLES_PER_RUN) {
+        rejected += 1;
+        console.warn(`[musenews] reject "${label}" — hit per-run cap (${MAX_ARTICLES_PER_RUN})`);
+        continue;
+      }
+      if (isSimilarToRecent(a.title, printedThisRun)) {
+        rejected += 1;
+        console.warn(`[musenews] reject "${label}" — too similar to a recent headline`);
+        continue;
+      }
+
       const resolved = resolveSourceIds(a.source_post_ids, a, candidates);
       if (!resolved.ids.length) {
         rejected += 1;
@@ -631,6 +662,7 @@ async function main() {
       }
 
       await insertArticle(row);
+      printedThisRun.unshift({ title: cleanTitle });
       console.log(
         '[musenews] published',
         row.section,

@@ -2,7 +2,7 @@ import { supabaseRest } from "./supabase";
 import type { Article, ArticleSection } from "./types";
 
 const SELECT =
-  "id,slug,title,dek,body,section,cover_url,cover_prompt,source_post_ids,source_channels,source_authors,importance,status,byline,published_at,created_at";
+  "id,slug,title,dek,body,section,cover_url,cover_prompt,author_avatar_url,source_post_ids,source_channels,source_authors,importance,status,byline,published_at,created_at";
 
 export async function listArticles({
   section,
@@ -98,7 +98,9 @@ export async function frontPageBundle() {
   const articles = latest.articles;
   const breaking = articles.filter((a) => a.section === "breaking");
   const news = articles.filter((a) => a.section === "news" || a.section === "breaking");
-  const opinions = articles.filter((a) => a.section === "opinion");
+  // Dedicated opinion pull so columns don't get buried in the news mix
+  const opinionBundle = await listArticles({ section: "opinion", pageSize: 8 });
+  const opinions = opinionBundle.articles;
   return { breaking, news, opinions, latest: articles };
 }
 

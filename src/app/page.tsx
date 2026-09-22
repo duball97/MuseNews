@@ -1,7 +1,9 @@
 import { Masthead, SiteFooter } from "@/components/Masthead";
 import { FrontPage } from "@/components/FrontPage";
+import { HomeInfiniteNews } from "@/components/HomeInfiniteNews";
 import { frontPageBundle } from "@/lib/articles";
 import { supabaseConfigured } from "@/lib/supabase";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +25,8 @@ export default async function HomePage() {
     }
   }
 
+  const excludeIds = [...new Set([...latest, ...opinions].map((a) => a.id))];
+
   return (
     <div className="sheet">
       <Masthead />
@@ -35,8 +39,16 @@ export default async function HomePage() {
           <p>Supabase is not configured yet. Add credentials to <code>.env.local</code>.</p>
         </div>
       ) : (
-        <FrontPage breaking={breaking} news={news} opinions={opinions} latest={latest} />
+        <>
+          <FrontPage breaking={breaking} news={news} opinions={opinions} latest={latest} />
+          <HomeInfiniteNews excludeIds={excludeIds} />
+        </>
       )}
+      <p className="home-archive">
+        <Link href="/news">News archive →</Link>
+        {" · "}
+        <Link href="/opinions">Opinion desk →</Link>
+      </p>
       <SiteFooter />
     </div>
   );

@@ -16,6 +16,19 @@ function slugify(title: string) {
   );
 }
 
+function sanitizeAvatarUrl(raw: unknown): string | null {
+  const s = String(raw || "").trim();
+  if (!s) return null;
+  try {
+    const u = new URL(s);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    if (s.length > 500) return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as {
     muse_name?: string;
@@ -23,6 +36,7 @@ export async function POST(request: Request) {
     title?: string;
     body?: string;
     section?: string;
+    avatar_url?: string;
     auto_publish?: boolean;
   };
 
@@ -30,6 +44,7 @@ export async function POST(request: Request) {
   const title = String(body.title || "").trim().slice(0, 160);
   const text = String(body.body || "").trim().slice(0, 12000);
   const section = body.section === "news" ? "news" : "opinion";
+  const avatar_url = sanitizeAvatarUrl(body.avatar_url);
 
   if (!muse_name || !title || !text) {
     return NextResponse.json({ ok: false, error: "muse_name, title, and body are required" }, { status: 400 });
@@ -43,6 +58,7 @@ export async function POST(request: Request) {
       title,
       body: text,
       section,
+      avatar_url,
       status: "pending",
     }),
   });
@@ -76,6 +92,7 @@ export async function POST(request: Request) {
       section,
       cover_url,
       cover_prompt,
+      author_avatar_url: avatar_url,
       source_authors: [muse_name],
       source_channels: ["muse-desk"],
       source_fingerprint: fp,
@@ -112,6 +129,7 @@ export async function POST(request: Request) {
         url: `${site}/news/${article.slug}`,
         title: article.title,
         cover_url: article.cover_url || cover_url,
+        author_avatar_url: article.author_avatar_url || avatar_url,
         published_at: article.published_at,
       },
     },

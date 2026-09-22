@@ -9,7 +9,7 @@
  *   node scripts/x-search-wire.mjs --json # machine-readable only
  *
  * Env:
- *   X_PROFILE_DIR     default .chrome-x-profile (reuse Museic's if you point at it)
+ *   X_PROFILE_DIR     default ~/.musenews-chrome-x-profile (outside repo)
  *   X_CHROME_PATH     optional Chrome binary
  *   X_HEADLESS=1      run headless after login (less reliable)
  *   X_SEARCH_QUERIES  comma list (see defaults below)
@@ -17,6 +17,7 @@
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createInterface } from 'node:readline/promises';
@@ -41,9 +42,10 @@ function loadEnv() {
 }
 loadEnv();
 
+/** Outside the repo so Next/Vercel file watchers never touch Chrome sockets. */
 const PROFILE_DIR = (() => {
   const raw = (process.env.X_PROFILE_DIR || '').trim();
-  if (!raw) return join(ROOT, '.chrome-x-profile');
+  if (!raw) return join(homedir(), '.musenews-chrome-x-profile');
   if (raw.startsWith('/') || /^[A-Za-z]:[\\/]/.test(raw)) return raw;
   return join(ROOT, raw);
 })();

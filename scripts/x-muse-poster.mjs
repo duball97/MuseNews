@@ -15,12 +15,13 @@
  *   OPENROUTER_X_MODEL      default openai/gpt-5.6-luna
  *   NEXT_PUBLIC_SITE_URL    default https://musenews.lol
  *   MUSENEWS_FEED           optional override for /api/muse/feed
- *   X_PROFILE_DIR           default .chrome-x-profile
+ *   X_PROFILE_DIR           default ~/.musenews-chrome-x-profile
  *   X_INTERVAL_MIN_MS / X_INTERVAL_MAX_MS
  *   X_REPLY_POLL_MIN_MS / X_REPLY_POLL_MAX_MS
  *   X_MAX_REPLIES           default 4
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -55,7 +56,7 @@ const FEED = (process.env.MUSENEWS_FEED || `${SITE}/api/muse/feed`).replace(/\/$
 
 const PROFILE_DIR = (() => {
   const raw = (process.env.X_PROFILE_DIR || '').trim();
-  if (!raw) return join(ROOT, '.chrome-x-profile');
+  if (!raw) return join(homedir(), '.musenews-chrome-x-profile');
   if (raw.startsWith('/') || /^[A-Za-z]:[\\/]/.test(raw)) return raw;
   return join(ROOT, raw);
 })();
