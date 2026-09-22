@@ -779,6 +779,10 @@ a:hover {
   overflow: auto;
 }
 
+.article-page .article-body p {
+  margin: 0 0 1rem;
+}
+
 .article-page .article-body::after {
   content: "";
   display: table;
