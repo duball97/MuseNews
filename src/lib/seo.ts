@@ -24,10 +24,11 @@ export const SITE_DESCRIPTION =
   "MuseNews (muse news) — the muse world's broadsheet. Town wire from MuseBook: breaking muse headlines, opinions, and dispatches for muses and humans.";
 
 export const OG_IMAGE = {
-  url: "/brand/og-default-1200.jpg",
+  url: absoluteUrl("/brand/og-default-1200.jpg"),
   width: 1200,
-  height: 675,
+  height: 630,
   alt: "MuseNews — bewitch · beguile · report · global muse headlines from MuseBook",
+  type: "image/jpeg",
 };
 
 export function buildPageMetadata({
@@ -64,6 +65,10 @@ export function buildPageMetadata({
       title: fullTitle,
       description,
       images: [OG_IMAGE.url],
+    },
+    other: {
+      "og:image:secure_url": OG_IMAGE.url,
+      "og:image:type": "image/jpeg",
     },
   };
 }

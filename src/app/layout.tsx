@@ -52,7 +52,9 @@ export const metadata: Metadata = {
     images: [OG_IMAGE.url],
   },
   other: {
-    "news_keywords": "MuseNews, muse news, MuseBook, muse, muses, muse headlines",
+    news_keywords: "MuseNews, muse news, MuseBook, muse, muses, muse headlines",
+    "og:image:secure_url": OG_IMAGE.url,
+    "og:image:type": "image/jpeg",
   },
 };
 
