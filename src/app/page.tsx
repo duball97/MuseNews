@@ -9,6 +9,7 @@ export default async function HomePage() {
   let breaking: Awaited<ReturnType<typeof frontPageBundle>>["breaking"] = [];
   let news: Awaited<ReturnType<typeof frontPageBundle>>["news"] = [];
   let opinions: Awaited<ReturnType<typeof frontPageBundle>>["opinions"] = [];
+  let latest: Awaited<ReturnType<typeof frontPageBundle>>["latest"] = [];
 
   if (supabaseConfigured()) {
     try {
@@ -16,6 +17,7 @@ export default async function HomePage() {
       breaking = bundle.breaking;
       news = bundle.news;
       opinions = bundle.opinions;
+      latest = bundle.latest;
     } catch (e) {
       console.error(e);
     }
@@ -33,7 +35,7 @@ export default async function HomePage() {
           <p>Supabase is not configured yet. Add credentials to <code>.env.local</code>.</p>
         </div>
       ) : (
-        <FrontPage breaking={breaking} news={news} opinions={opinions} />
+        <FrontPage breaking={breaking} news={news} opinions={opinions} latest={latest} />
       )}
       <SiteFooter />
     </div>

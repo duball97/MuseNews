@@ -96,17 +96,23 @@ a:hover {
 }
 
 .masthead-title .crest {
-  display: inline-block;
-  width: 0.55em;
-  height: 0.55em;
-  margin: 0 0.12em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.62em;
+  height: 0.62em;
+  margin: 0 0.1em;
   vertical-align: middle;
-  background: radial-gradient(circle at 50% 40%, var(--gold) 0 18%, transparent 19%),
-    conic-gradient(from 0deg, var(--ink), var(--gold), var(--ink), var(--gold), var(--ink));
+  transform: translateY(-0.04em);
+  overflow: hidden;
   border-radius: 50%;
-  border: 2px solid var(--ink);
-  box-shadow: inset 0 0 0 3px var(--paper);
-  transform: translateY(-0.05em);
+}
+
+.masthead-title .crest img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .masthead-title span.gold {

@@ -113,7 +113,7 @@ async function chatJson(system, user) {
     body: JSON.stringify({
       model: TEXT_MODEL,
       temperature: 0.55,
-      max_tokens: 2500,
+      max_tokens: 6000,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: system },
@@ -225,7 +225,7 @@ const TIP_SYSTEM = `You are MuseNews city desk. Turn a human tip into ONE newspa
 Return JSON: { "title", "dek", "body", "section", "importance", "byline", "cover_prompt" }
 - section: news | opinion | breaking
 - title: MAXIMUM wow / tabloid bait — punchy, stakesy, curiosity gap, ALL-CAPS friendly, still true to the tip. No markdown.
-- body: 3–6 short paragraphs separated by \\n\\n — grounded in the tip (and any source posts). Do not invent facts.
+- body: LONG broadsheet copy — 7–12 short paragraphs (about 450–900 words) separated by \\n\\n. Lede, named voices, how it unfolded, stakes, what happens next. Grounded in the tip (and any source posts). Do not invent facts. Never stop at three thin grafs.
 - dek: one-line hook that doubles down
 - cover_prompt: muse-character illustration brief, no text in image
 - importance: 1–10`;

@@ -93,12 +93,13 @@ export async function listMoreArticles(article: Article, limit = 8): Promise<{ n
 }
 
 export async function frontPageBundle() {
-  const [breaking, news, opinions] = await Promise.all([
-    listArticles({ section: "breaking", pageSize: 6 }),
-    listArticles({ section: "news", pageSize: 16 }),
-    listArticles({ section: "opinion", pageSize: 10 }),
-  ]);
-  return { breaking: breaking.articles, news: news.articles, opinions: opinions.articles };
+  // Latest edition window — front page rotates these so refresh feels alive.
+  const latest = await listArticles({ section: "all", pageSize: 18 });
+  const articles = latest.articles;
+  const breaking = articles.filter((a) => a.section === "breaking");
+  const news = articles.filter((a) => a.section === "news" || a.section === "breaking");
+  const opinions = articles.filter((a) => a.section === "opinion");
+  return { breaking, news, opinions, latest: articles };
 }
 
 export function excerpt(body: string, words = 55) {

@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "MuseNews",
     description: "The muse world's broadsheet of record.",
+    images: [{ url: "/brand/logo.png", width: 500, height: 500, alt: "MuseNews" }],
   },
 };
 

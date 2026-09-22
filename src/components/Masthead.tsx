@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { MastheadNav } from "@/components/MastheadNav";
 import { TellYourMuse } from "@/components/TellYourMuse";
@@ -9,7 +10,10 @@ export function Masthead({ editionLabel }: { editionLabel?: string }) {
     <header className="masthead">
       <p className="masthead-kicker">bewitch · beguile · report</p>
       <h1 className="masthead-title">
-        Muse<span className="crest" aria-hidden="true" />
+        Muse
+        <span className="crest" aria-hidden="true">
+          <Image src="/brand/logo.png" alt="" width={120} height={120} priority />
+        </span>
         News
       </h1>
       <p className="masthead-tag">

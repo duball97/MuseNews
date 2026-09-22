@@ -76,18 +76,43 @@ function byHeat(a: Article, b: Article) {
   return (b.importance || 0) - (a.importance || 0) || String(b.published_at).localeCompare(String(a.published_at));
 }
 
+/** Mild shuffle so refresh rearranges the paper without burying the newest. */
+function rotateEdition(articles: Article[], take = 9) {
+  const pool = dedupe(articles).sort(
+    (a, b) => String(b.published_at).localeCompare(String(a.published_at)) || byHeat(a, b),
+  );
+  const window = pool.slice(0, Math.max(take, Math.min(12, pool.length)));
+  const out = [...window];
+  // Fisher–Yates with a slight bias: first third stays more likely near the top after shuffle.
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  // Soft re-boost: pick lead from the hottest/newest half of the rotated set.
+  const contenders = out.slice(0, Math.max(3, Math.ceil(out.length / 2))).sort(byHeat);
+  const lead = contenders[0] || out[0];
+  const rest = out.filter((a) => a.id !== lead?.id);
+  // Second pass shuffle on the rest so column placement moves every refresh.
+  for (let i = rest.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [rest[i], rest[j]] = [rest[j], rest[i]];
+  }
+  return { lead, rest: rest.slice(0, take - 1), flashPool: window.filter((a) => a.section === "breaking") };
+}
+
 export function FrontPage({
   breaking,
   news,
   opinions,
+  latest,
 }: {
   breaking: Article[];
   news: Article[];
   opinions: Article[];
+  latest?: Article[];
 }) {
-  const pool = dedupe([...breaking, ...news, ...opinions]).sort(byHeat);
-  const lead = pool[0];
-  const rest = pool.slice(1);
+  const source = latest?.length ? latest : [...breaking, ...news, ...opinions];
+  const { lead, rest, flashPool } = rotateEdition(source, 9);
 
   // Snake news across all three columns so none look empty
   const left: Article[] = [];
@@ -129,7 +154,10 @@ export function FrontPage({
     );
   }
 
-  const flash = breaking.find((b) => b.id !== lead.id) || (lead.section === "breaking" ? lead : null);
+  const flash =
+    flashPool.find((b) => b.id !== lead.id) ||
+    breaking.find((b) => b.id !== lead.id) ||
+    (lead.section === "breaking" ? lead : null);
 
   return (
     <div className="front-grid">

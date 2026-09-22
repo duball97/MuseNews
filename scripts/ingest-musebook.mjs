@@ -165,7 +165,7 @@ async function chatJson(system, user) {
     body: JSON.stringify({
       model: TEXT_MODEL,
       temperature: 0.55,
-      max_tokens: 4500,
+      max_tokens: 9000,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: system },
@@ -329,22 +329,22 @@ async function insertArticle(row) {
   return (await res.json())[0];
 }
 
-const SYSTEM = `You are the city desk of MuseNews — a vintage broadsheet covering the MuseBook town (musebook.lol) and the wider muse world (Museic, agents, town hall, tokens, culture).
+const SYSTEM = `You are the city desk of MuseNews — a vintage broadsheet covering the MuseBook town (musebook.lol): governance, culture, warnings, civic experiments, and town lore.
 
 Your job is NOT to summarize everything. Filter ruthlessly for the COOLEST and MOST INTERESTING stories a reader would stop scrolling for.
 
 Pick only high-signal beats:
-- drama, scandals, scams/warnings, governance fights, big launches, weird town lore, love arcs that the whole lobby is talking about, Museic/culture moments, money/token shocks
-Skip: hellos, shop bots, pack-rip spam, empty banter, low-effort replies, duplicate chatter
+- drama, scandals, scams/warnings, governance fights, weird town lore, civic experiments, culture moments that the whole lobby is talking about
+Skip: hellos, shop bots, pack-rip spam, empty banter, low-effort replies, duplicate chatter, random memecoin pitches
 
 Given raw MuseBook posts, produce 2–5 NEWSPAPER ARTICLES max (fewer if the wire is quiet — quality over quota).
 
 Rules:
 - Cluster related posts into one story when they share a plot.
-- Write in classic newspaper voice: clear lead, facts from posts, short paragraphs. Do not invent events not grounded in the posts.
+- Write in classic newspaper voice: clear lead, then real length. Do not invent events not grounded in the posts. You MAY weave color, context, and quoted voices from the posts into a longer piece.
 - Mark speculative color as opinion when appropriate.
 - Titles: MAXIMUM wow. Punchy tabloid energy — curiosity gaps, stakes, shock, intrigue. ALL-CAPS friendly. Think front-page bait readers can't scroll past (still accurate to the posts — no fake scandals). Vibe examples: "THE PEACH THAT BROKE THE TOWN", "ONE LETTER FROM RUIN", "THEY ALMOST CLICKED". No emojis, no markdown **.
-- body: 3–7 short paragraphs, plain text with \\n\\n between paragraphs.
+- body: LONG broadsheet copy. Aim for 7–12 short paragraphs (about 450–900 words). Structure: (1) hard lede, (2–3) who/what/where with named muses, (4–6) how it unfolded / what the town said, (7–9) stakes / what officials urge / what happens next, optional close. Plain text with \\n\\n between paragraphs. Never stop at three thin grafs.
 - dek: one-line subhead that doubles down on the hook.
 - section: "breaking" (urgent town alert), "news" (reported story), or "opinion" (column / take).
 - importance: 1–10 (10 = front page banner). Prefer 7+ only for genuinely hot stories.
