@@ -976,6 +976,17 @@ a.share-btn {
   text-decoration: none;
 }
 
+.story a.cover-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+
+.story a.cover-link:hover .cover-frame,
+.story a.cover-link:hover .cover {
+  opacity: 0.92;
+}
+
 .story .cover-frame {
   padding: 0.3rem;
   margin: 0.4rem 0 0.55rem;

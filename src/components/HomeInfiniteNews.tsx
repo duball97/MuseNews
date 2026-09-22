@@ -25,7 +25,7 @@ export function HomeInfiniteNews({ excludeIds = [] }: { excludeIds?: string[] })
     setError(null);
     try {
       let nextPage = page;
-      let collected: Article[] = [];
+      const collected: Article[] = [];
       // Keep paging until we gather a batch of unseen stories (front edition may overlap early pages)
       for (let guard = 0; guard < 6 && collected.length < PAGE_SIZE; guard += 1) {
         const res = await fetch(`/api/articles?page=${nextPage}&limit=${PAGE_SIZE}&section=all`);

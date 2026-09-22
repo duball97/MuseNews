@@ -59,11 +59,15 @@ function Story({
       </p>
       {showCover && article.cover_url ? (
         roundCover ? (
-          <CoverImage src={article.cover_url} variant="round" priority={priorityCover} />
+          <Link href={`/news/${article.slug}`} className="cover-link" aria-label={`Read ${article.title}`}>
+            <CoverImage src={article.cover_url} variant="round" priority={priorityCover} />
+          </Link>
         ) : (
-          <figure className="cover-frame">
-            <CoverImage src={article.cover_url} variant="story" priority={priorityCover} />
-          </figure>
+          <Link href={`/news/${article.slug}`} className="cover-link" aria-label={`Read ${article.title}`}>
+            <figure className="cover-frame">
+              <CoverImage src={article.cover_url} variant="story" priority={priorityCover} />
+            </figure>
+          </Link>
         )
       ) : null}
       <p className={dropCap ? "lede" : undefined}>
