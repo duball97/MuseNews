@@ -9,6 +9,14 @@
     "lint": "next lint",
     "ingest": "node scripts/ingest-musebook.mjs",
     "ingest:dry": "node scripts/ingest-musebook.mjs --dry-run --no-covers",
+    "ingest:x": "node scripts/ingest-musebook.mjs --with-x",
+    "ingest:watch": "node scripts/ingest-watch.mjs",
+    "ingest:watch:x": "node scripts/ingest-watch.mjs --with-x",
+    "x:login": "node scripts/x-login.mjs",
+    "x:search": "node scripts/x-search-wire.mjs",
+    "x:once": "node scripts/x-muse-poster.mjs --once",
+    "x:dry": "node scripts/x-muse-poster.mjs --once --dry-run",
+    "x:loop": "node scripts/x-muse-poster.mjs",
     "share": "node scripts/share-tip.mjs",
     "share:dry": "node scripts/share-tip.mjs --dry-run --no-cover",
     "x:voice": "node scripts/x-space-voice.mjs"
@@ -16,6 +24,9 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",
     "next": "14.2.35",
+    "puppeteer": "^25.11.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "react": "^18",
     "react-dom": "^18",
     "sharp": "^0.35.4"

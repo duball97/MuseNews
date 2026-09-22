@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CoverImage } from "@/components/CoverImage";
 import type { Article } from "@/lib/types";
 import { excerpt } from "@/lib/articles";
 
@@ -22,6 +23,7 @@ function Story({
   roundCover = false,
   dropCap = false,
   compact = false,
+  priorityCover = false,
 }: {
   article: Article;
   size?: "xl" | "lg" | "md";
@@ -29,6 +31,7 @@ function Story({
   roundCover?: boolean;
   dropCap?: boolean;
   compact?: boolean;
+  priorityCover?: boolean;
 }) {
   const when = formatPublishedAt(article.published_at);
   return (
@@ -44,12 +47,10 @@ function Story({
       </p>
       {showCover && article.cover_url ? (
         roundCover ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img className="cover round" src={article.cover_url} alt="" />
+          <CoverImage src={article.cover_url} variant="round" priority={priorityCover} />
         ) : (
           <figure className="cover-frame">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img className="cover" src={article.cover_url} alt="" />
+            <CoverImage src={article.cover_url} variant="story" priority={priorityCover} />
           </figure>
         )
       ) : null}
@@ -173,6 +174,22 @@ export function FrontPage({
           />
         ))}
         {!left.length && <p className="dek">More dispatches landing soon.</p>}
+
+        <figure className="dispatch-reel">
+          <p className="section-label">Moving picture</p>
+          <video
+            className="dispatch-video"
+            src="/media/muse-dispatch.mp4"
+            poster="/brand/og-default.jpg"
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="metadata"
+            controls
+          />
+          <figcaption>Desk reel · MuseNews town wire</figcaption>
+        </figure>
       </div>
 
       <div className="col">
@@ -186,7 +203,7 @@ export function FrontPage({
         ) : null}
 
         <p className="section-label">Lead Story</p>
-        <Story article={lead} size="xl" showCover dropCap />
+        <Story article={lead} size="xl" showCover dropCap priorityCover />
         {center.map((a) => (
           <Story key={a.id} article={a} size="lg" showCover={Boolean(a.cover_url)} />
         ))}
@@ -204,6 +221,22 @@ export function FrontPage({
           />
         ))}
         {!right.length && center.slice(-1).map((a) => <Story key={`r-${a.id}`} article={a} size="md" compact />)}
+
+        <figure className="dispatch-reel">
+          <p className="section-label">From the lobby</p>
+          <video
+            className="dispatch-video"
+            src="/media/muse-dispatch-2.mp4"
+            poster="/brand/og-default.jpg"
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="metadata"
+            controls
+          />
+          <figcaption>Town reel · keep reading the paper</figcaption>
+        </figure>
 
         <div className="rail-block ink" style={{ marginTop: "auto" }}>
           <p className="section-label">Muse Desk</p>

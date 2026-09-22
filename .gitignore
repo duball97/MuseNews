@@ -32,6 +32,9 @@ yarn-error.log*
 # floor reporter
 .voice-out/
 
+# X / Chrome session for search wire
+.chrome-x-profile/
+
 # vercel
 .vercel
 

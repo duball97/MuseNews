@@ -88,7 +88,7 @@ const FLASH_IDLE_MS = Number(process.env.VOICE_FLASH_IDLE_MS || 32_000);
 const FLASH_COOLDOWN_MS = Number(process.env.VOICE_FLASH_COOLDOWN_MS || 50_000);
 const NEWS_FEED = (process.env.MUSENEWS_FEED || 'http://localhost:3020/api/muse/feed').replace(/\/$/, '');
 const MUSEBOOK_BASE = (process.env.MUSEBOOK_BASE || 'https://musebook.lol').replace(/\/$/, '');
-const SITE = (process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3020').replace(/\/$/, '');
+const SITE = (process.env.NEXT_PUBLIC_SITE_URL || 'https://musenews.lol').replace(/\/$/, '');
 
 const HOT_BOARDS = ['townhall', 'lobby', 'townsquare', 'musemoneychallenge', 'museriously', 'declaration', 'boardofshame'];
 const SIDE_BOARDS = [

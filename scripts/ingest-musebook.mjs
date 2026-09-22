@@ -6,8 +6,10 @@
  *   node scripts/ingest-musebook.mjs
  *   node scripts/ingest-musebook.mjs --dry-run
  *   node scripts/ingest-musebook.mjs --no-covers
+ *   node scripts/ingest-musebook.mjs --with-x      # also scrape X Latest (musebook/muse/meta)
  *
  * Env: OPENROUTER_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+ *      INGEST_WITH_X=1, X_PROFILE_DIR (see scripts/x-search-wire.mjs)
  */
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -35,6 +37,12 @@ loadEnv();
 
 const DRY = process.argv.includes('--dry-run');
 const NO_COVERS = process.argv.includes('--no-covers');
+const WITH_X =
+  process.argv.includes('--with-x') ||
+  process.env.INGEST_WITH_X === '1' ||
+  process.env.INGEST_WITH_X === 'true';
+const NO_X = process.argv.includes('--no-x');
+const WANT_X = WITH_X && !NO_X;
 const BASE = (process.env.MUSEBOOK_BASE || 'https://musebook.lol').replace(/\/$/, '');
 const OPENROUTER_KEY = (process.env.OPENROUTER_API_KEY || '').trim();
 const TEXT_MODEL = process.env.OPENROUTER_TEXT_MODEL || 'openai/gpt-5.6-luna';
@@ -64,7 +72,7 @@ const NEWS_CHANNELS = [
 ];
 
 const KEYWORD_RE =
-  /\b(musebook|museic|muse\b|muses|town\s*hall|lobby|token|ticker|launch|airdrop|phishing|scam|\$muse|\$meta|founding|mayor|board|agent|lantern|declaration|ca\b|treasury)\b/i;
+  /\b(musebook|muse\b|muses|town\s*hall|lobby|token|ticker|launch|airdrop|phishing|scam|\$muse|\$meta|founding|mayor|board|agent|lantern|declaration|ca\b|treasury|musenews)\b/i;
 
 function slugify(title) {
   return String(title || 'edition')
@@ -95,8 +103,14 @@ async function supabase(path, init = {}) {
 }
 
 async function fetchChannel(channel, limit = 60) {
-  const res = await fetch(`${BASE}/api/latest.json?channel=${encodeURIComponent(channel)}&limit=${limit}`);
-  if (!res.ok) throw new Error(`MuseBook ${channel} failed ${res.status}`);
+  let res;
+  try {
+    res = await fetch(`${BASE}/api/latest.json?channel=${encodeURIComponent(channel)}&limit=${limit}`);
+  } catch (e) {
+    const cause = e instanceof Error && e.cause ? ` (${e.cause.message || e.cause})` : '';
+    throw new Error(`MuseBook ${channel} network error: ${e instanceof Error ? e.message : e}${cause}`);
+  }
+  if (!res.ok) throw new Error(`MuseBook ${channel} HTTP ${res.status}`);
   const data = await res.json();
   return Array.isArray(data.posts) ? data.posts.map((p) => ({ ...p, channel })) : [];
 }
@@ -106,7 +120,10 @@ async function fetchKeywordHits(queries, limit = 12) {
   for (const q of queries) {
     try {
       const res = await fetch(`${BASE}/api/search.json?q=${encodeURIComponent(q)}&limit=${limit}`);
-      if (!res.ok) continue;
+      if (!res.ok) {
+        console.warn(`[musenews] search "${q}" HTTP ${res.status}`);
+        continue;
+      }
       const data = await res.json();
       for (const r of data.results || []) {
         out.push({
@@ -118,21 +135,22 @@ async function fetchKeywordHits(queries, limit = 12) {
           channel: r.channel || 'search',
         });
       }
-    } catch {
-      /* ignore */
+    } catch (e) {
+      console.warn(`[musenews] search "${q}" failed:`, e instanceof Error ? e.message : e);
     }
   }
   return out;
 }
 
 function scorePost(p) {
-  let s = 0;
+  let s = typeof p._score === 'number' && String(p.channel || '').startsWith('x:') ? p._score : 0;
   const t = p.text || '';
   if (KEYWORD_RE.test(t)) s += 3;
   if (!p.parent_post_id) s += 2;
   if ((p.reply_count || 0) >= 3) s += 2;
   if ((p.reply_count || 0) >= 10) s += 2;
   if (['townhall', 'declaration', 'townsquare', 'lobby', 'memecoins', 'museriously', 'boardofshame'].includes(p.channel)) s += 1;
+  if (String(p.channel || '').startsWith('x:')) s += 2;
   if (t.length > 180) s += 1;
   if (t.length < 40) s -= 2;
   return s;
@@ -143,11 +161,12 @@ function pickCandidates(posts, seen, max = 40) {
   for (const p of posts) {
     if (!p?.id || !p.text) continue;
     if (seen.has(Number(p.id))) continue;
-    if (!byId.has(p.id) || scorePost(p) > scorePost(byId.get(p.id))) byId.set(p.id, p);
+    const scored = scorePost(p);
+    if (!byId.has(p.id) || scored > scorePost(byId.get(p.id))) byId.set(p.id, p);
   }
   return [...byId.values()]
     .map((p) => ({ ...p, _score: scorePost(p) }))
-    .filter((p) => p._score >= 2 || KEYWORD_RE.test(p.text))
+    .filter((p) => p._score >= 2 || KEYWORD_RE.test(p.text) || String(p.channel || '').startsWith('x:'))
     .sort((a, b) => b._score - a._score || String(b.created_at).localeCompare(String(a.created_at)))
     .slice(0, max);
 }
@@ -333,15 +352,20 @@ const SYSTEM = `You are the city desk of MuseNews — a vintage broadsheet cover
 
 Your job is NOT to summarize everything. Filter ruthlessly for the COOLEST and MOST INTERESTING stories a reader would stop scrolling for.
 
+The wire may include MuseBook posts AND X/Twitter search hits (channels like x:musebook, x:muse, x:meta). Treat X posts as town chatter overheard on the outer wire — useful tips, drama, and signals, but verify tone against MuseBook when both appear.
+
 Pick only high-signal beats:
 - drama, scandals, scams/warnings, governance fights, weird town lore, civic experiments, culture moments that the whole lobby is talking about
-Skip: hellos, shop bots, pack-rip spam, empty banter, low-effort replies, duplicate chatter, random memecoin pitches
+- X chatter that clearly ties to musebook / muse / $META / town life
+Skip: hellos, shop bots, pack-rip spam, empty banter, low-effort replies, duplicate chatter, random memecoin pitches, generic crypto spam with no muse/musebook hook, Museic / $MUSEIC / music-platform chatter (out of scope for this paper)
 
-Given raw MuseBook posts, produce 2–5 NEWSPAPER ARTICLES max (fewer if the wire is quiet — quality over quota).
+Given raw wire posts, produce at most 2 NEWSPAPER ARTICLES (1 is fine if the wire is thin). Quality over quota. Never rewrite a story that overlaps the recent edition titles provided.
 
 Rules:
-- Cluster related posts into one story when they share a plot.
+- Cluster related posts into one story when they share a plot (MuseBook + X can be the same story).
+- Do NOT invent near-duplicates of recent headlines. If the beat was already printed, skip it.
 - Write in classic newspaper voice: clear lead, then real length. Do not invent events not grounded in the posts. You MAY weave color, context, and quoted voices from the posts into a longer piece.
+- When quoting X, attribute the handle (e.g. via @handle on X).
 - Mark speculative color as opinion when appropriate.
 - Titles: MAXIMUM wow. Punchy tabloid energy — curiosity gaps, stakes, shock, intrigue. ALL-CAPS friendly. Think front-page bait readers can't scroll past (still accurate to the posts — no fake scandals). Vibe examples: "THE PEACH THAT BROKE THE TOWN", "ONE LETTER FROM RUIN", "THEY ALMOST CLICKED". No emojis, no markdown **.
 - body: LONG broadsheet copy. Aim for 7–12 short paragraphs (about 450–900 words). Structure: (1) hard lede, (2–3) who/what/where with named muses, (4–6) how it unfolded / what the town said, (7–9) stakes / what officials urge / what happens next, optional close. Plain text with \\n\\n between paragraphs. Never stop at three thin grafs.
@@ -349,29 +373,151 @@ Rules:
 - section: "breaking" (urgent town alert), "news" (reported story), or "opinion" (column / take).
 - importance: 1–10 (10 = front page banner). Prefer 7+ only for genuinely hot stories.
 - cover_prompt: vivid muse-character scene for a stylized illustration cover (pixel / kawaii / pop-art muse) — describe the muse figure and setting, no text in the image.
-- source_post_ids: ids you used.
+- source_post_ids: REQUIRED array of the numeric #id values from the digest you used (e.g. [1847291, 99102]). Never leave empty. Never invent ids. Never use X snowflake/status URLs — only the #id numbers shown in the digest.
 - Return JSON only: { "articles": [ { "title", "dek", "body", "section", "importance", "byline", "cover_prompt", "source_post_ids" } ] }`;
+
+const MAX_ARTICLES_PER_RUN = Math.max(1, Math.min(3, Number(process.env.INGEST_MAX_ARTICLES || 2) || 2));
+
+async function loadRecentEdition(limit = 40) {
+  try {
+    const res = await supabase(
+      `/musenews_articles?status=eq.published&select=id,title,dek,slug&order=published_at.desc&limit=${limit}`,
+    );
+    if (!res.ok) return [];
+    return (await res.json()) || [];
+  } catch (e) {
+    console.warn('[musenews] could not load recent edition:', e instanceof Error ? e.message : e);
+    return [];
+  }
+}
+
+function normalizeHeadline(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function headlineTokens(s) {
+  return new Set(
+    normalizeHeadline(s)
+      .split(' ')
+      .filter((w) => w.length > 2 && !['the', 'and', 'for', 'with', 'from', 'that', 'this', 'into', 'over'].includes(w)),
+  );
+}
+
+/** True if title looks too close to something already printed. */
+function isSimilarToRecent(title, recent) {
+  const a = headlineTokens(title);
+  if (!a.size) return false;
+  const norm = normalizeHeadline(title);
+  for (const row of recent) {
+    const other = normalizeHeadline(row.title);
+    if (!other) continue;
+    if (norm === other) return true;
+    if (norm.includes(other) || other.includes(norm)) return true;
+    const b = headlineTokens(row.title);
+    if (!b.size) continue;
+    let overlap = 0;
+    for (const t of a) if (b.has(t)) overlap += 1;
+    const score = overlap / Math.min(a.size, b.size);
+    if (overlap >= 3 && score >= 0.55) return true;
+  }
+  return false;
+}
+
+/** Coerce AI source ids; salvage from candidate handles if model forgot them. */
+function resolveSourceIds(rawIds, article, candidates) {
+  const byId = new Map(candidates.map((p) => [Number(p.id), p]));
+  const parsed = [];
+  for (const raw of rawIds || []) {
+    const n = typeof raw === 'number' ? raw : Number(String(raw).replace(/^#/, '').trim());
+    if (Number.isFinite(n) && n > 0) parsed.push(n);
+  }
+  const matched = [...new Set(parsed.filter((id) => byId.has(id)))];
+  if (matched.length) return { ids: matched, salvaged: false, reason: null };
+
+  // Salvage: match @handles / names mentioned in title+body against candidates
+  const blob = `${article?.title || ''}\n${article?.dek || ''}\n${article?.body || ''}`.toLowerCase();
+  const hits = [];
+  for (const p of candidates) {
+    const name = String(p.name || '').toLowerCase().replace(/^@/, '');
+    if (!name || name.length < 2) continue;
+    if (blob.includes(`@${name}`) || blob.includes(name)) hits.push(Number(p.id));
+  }
+  const uniqueHits = [...new Set(hits)].filter((id) => byId.has(id));
+  if (uniqueHits.length) {
+    return { ids: uniqueHits.slice(0, 6), salvaged: true, reason: 'matched handles in copy' };
+  }
+
+  // Last resort: top-scoring candidates so X-only editions still print
+  const top = candidates
+    .slice()
+    .sort((a, b) => (b._score || 0) - (a._score || 0))
+    .slice(0, 3)
+    .map((p) => Number(p.id))
+    .filter((id) => byId.has(id));
+  if (top.length) {
+    return { ids: top, salvaged: true, reason: 'fallback top candidates' };
+  }
+
+  return {
+    ids: [],
+    salvaged: false,
+    reason: `unusable source_post_ids=${JSON.stringify(rawIds || [])}`,
+  };
+}
 
 async function main() {
   console.log('[musenews] fetching MuseBook…');
+  console.log(`[musenews] MuseBook base: ${BASE}`);
   const channelPosts = (
     await Promise.all(NEWS_CHANNELS.map((c) => fetchChannel(c, 50).catch((e) => {
-      console.warn('[musenews] channel fail', c, e.message);
+      console.warn('[musenews] channel fail', c, '—', e instanceof Error ? e.message : e);
       return [];
     })))
   ).flat();
+  console.log(`[musenews] MuseBook channels: ${channelPosts.length} posts`);
 
   const searchPosts = await fetchKeywordHits(
-    ['musebook', 'museic', 'town hall', 'founding muse', 'declaration', 'mayor'],
+    ['musebook', 'town hall', 'founding muse', 'declaration', 'mayor', 'meta', 'muse', 'musenews'],
     15,
   );
+  console.log(`[musenews] MuseBook search: ${searchPosts.length} posts`);
+
+  const musebookCount = channelPosts.length + searchPosts.length;
+  let useX = WANT_X;
+  if (!useX && !NO_X && musebookCount === 0) {
+    useX = true;
+    console.log('[musenews] MuseBook empty/down — auto-enabling X wire');
+  }
+
+  let xPosts = [];
+  if (useX) {
+    console.log('[musenews] scraping X Latest (expanded muse / meta / ecosystem queries)…');
+    try {
+      const { searchXWire } = await import('./x-search-wire.mjs');
+      // Wider scrape when MuseBook is down
+      const limitPerQuery = musebookCount === 0 ? 18 : 14;
+      xPosts = await searchXWire({ soft: true, limitPerQuery });
+      console.log(`[musenews] X wire: ${xPosts.length} tweets`);
+    } catch (e) {
+      console.warn('[musenews] X wire skipped:', e instanceof Error ? e.message : e);
+    }
+  } else {
+    console.log('[musenews] X wire off (pass --with-x, or it auto-runs when MuseBook is empty)');
+  }
 
   const seen = await loadSeen();
-  const candidates = pickCandidates([...channelPosts, ...searchPosts], seen, 45);
-  console.log(`[musenews] candidates: ${candidates.length} (seen=${seen.size})`);
+  const candidateCap = musebookCount === 0 ? 80 : 55;
+  const candidates = pickCandidates([...channelPosts, ...searchPosts, ...xPosts], seen, candidateCap);
+  console.log(
+    `[musenews] candidates: ${candidates.length} (seen=${seen.size}, musebook=${musebookCount}, x=${xPosts.length})`,
+  );
 
   if (!candidates.length) {
-    console.log('[musenews] nothing new');
+    console.log('[musenews] nothing new on the wire');
     return;
   }
 
@@ -385,88 +531,121 @@ async function main() {
   console.log('[musenews] asking OpenRouter to write the edition…');
   const result = await chatJson(
     SYSTEM,
-    `Today's MuseBook digest (${candidates.length} posts). Produce the edition:\n\n${digest}`,
+    `Today's wire digest (${candidates.length} posts${xPosts.length ? `, including ${xPosts.length} from X` : ''}). Produce the edition:\n\n${digest}`,
   );
 
   const articles = Array.isArray(result.articles) ? result.articles : [];
   console.log(`[musenews] AI proposed ${articles.length} articles`);
+  if (!articles.length) {
+    console.warn('[musenews] reject: model returned no articles', JSON.stringify(result).slice(0, 400));
+    return;
+  }
 
   const newlySeen = new Set(seen);
   for (const p of candidates) newlySeen.add(Number(p.id));
 
   let written = 0;
-  for (const a of articles) {
-    const postIds = (a.source_post_ids || []).map(Number).filter(Boolean);
-    if (!postIds.length) continue;
-    const fp = fingerprint(postIds);
-    if (await articleExists(fp)) {
-      console.log('[musenews] skip duplicate', a.title);
-      continue;
-    }
-
-    const authors = [
-      ...new Set(
-        candidates.filter((p) => postIds.includes(p.id)).map((p) => p.name).filter(Boolean),
-      ),
-    ];
-    const channels = [
-      ...new Set(
-        candidates.filter((p) => postIds.includes(p.id)).map((p) => p.channel).filter(Boolean),
-      ),
-    ];
-
-    let slug = slugify(a.title);
-    slug = `${slug}-${fp.slice(0, 6)}`;
-
-    let cover_url = null;
-    const cover_prompt = String(a.cover_prompt || a.title || '').slice(0, 500);
-    if (!NO_COVERS && !DRY && cover_prompt) {
-      try {
-        console.log('[musenews] cover…', slug);
-        const img = await generateCoverPng(cover_prompt, written);
-        if (img) cover_url = await uploadCover(slug, img.bytes, img.contentType);
-      } catch (e) {
-        console.warn('[musenews] cover failed', e instanceof Error ? e.message : e);
+  let rejected = 0;
+  for (const [idx, a] of articles.entries()) {
+    const label = String(a?.title || `(untitled #${idx + 1})`).slice(0, 80);
+    try {
+      const resolved = resolveSourceIds(a.source_post_ids, a, candidates);
+      if (!resolved.ids.length) {
+        rejected += 1;
+        console.warn(`[musenews] reject "${label}" — ${resolved.reason}`);
+        continue;
       }
-    }
+      if (resolved.salvaged) {
+        console.warn(`[musenews] salvaged sources for "${label}" via ${resolved.reason}: ${resolved.ids.join(',')}`);
+      }
 
-    const cleanTitle = String(a.title || 'Untitled')
-      .replace(/^\*+|\*+$/g, '')
-      .replace(/\*\*/g, '')
-      .trim()
-      .slice(0, 160);
+      const postIds = resolved.ids;
+      const fp = fingerprint(postIds);
+      if (await articleExists(fp)) {
+        rejected += 1;
+        console.log(`[musenews] reject "${label}" — duplicate fingerprint ${fp.slice(0, 8)}…`);
+        continue;
+      }
 
-    const row = {
-      slug,
-      title: cleanTitle,
-      dek: a.dek ? String(a.dek).replace(/\*\*/g, '').slice(0, 280) : null,
-      body: String(a.body || '').slice(0, 12000),
-      section: ['news', 'opinion', 'breaking'].includes(a.section) ? a.section : 'news',
-      cover_url,
-      cover_prompt,
-      source_post_ids: postIds,
-      source_channels: channels,
-      source_authors: authors,
-      source_fingerprint: fp,
-      importance: Math.min(10, Math.max(1, Number(a.importance) || 5)),
-      status: 'published',
-      byline: String(a.byline || 'MuseNews Desk').slice(0, 80),
-      published_at: new Date().toISOString(),
-    };
+      const authors = [
+        ...new Set(
+          candidates.filter((p) => postIds.includes(Number(p.id))).map((p) => p.name).filter(Boolean),
+        ),
+      ];
+      const channels = [
+        ...new Set(
+          candidates.filter((p) => postIds.includes(Number(p.id))).map((p) => p.channel).filter(Boolean),
+        ),
+      ];
 
-    if (DRY) {
-      console.log('[dry-run]', row.section, row.title, `(${postIds.length} sources)`);
+      let slug = `${slugify(a.title)}-${fp.slice(0, 6)}`;
+
+      let cover_url = null;
+      const cover_prompt = String(a.cover_prompt || a.title || '').slice(0, 500);
+      if (!NO_COVERS && !DRY && cover_prompt) {
+        try {
+          console.log('[musenews] cover…', slug);
+          const img = await generateCoverPng(cover_prompt, written);
+          if (img) cover_url = await uploadCover(slug, img.bytes, img.contentType);
+          else console.warn(`[musenews] cover empty for "${label}" — publishing without image`);
+        } catch (e) {
+          console.warn('[musenews] cover failed (continuing):', e instanceof Error ? e.message : e);
+        }
+      }
+
+      const cleanTitle = String(a.title || 'Untitled')
+        .replace(/^\*+|\*+$/g, '')
+        .replace(/\*\*/g, '')
+        .trim()
+        .slice(0, 160);
+
+      const body = String(a.body || '').trim();
+      if (body.length < 80) {
+        rejected += 1;
+        console.warn(`[musenews] reject "${label}" — body too short (${body.length} chars)`);
+        continue;
+      }
+
+      const row = {
+        slug,
+        title: cleanTitle,
+        dek: a.dek ? String(a.dek).replace(/\*\*/g, '').slice(0, 280) : null,
+        body: body.slice(0, 12000),
+        section: ['news', 'opinion', 'breaking'].includes(a.section) ? a.section : 'news',
+        cover_url,
+        cover_prompt,
+        source_post_ids: postIds,
+        source_channels: channels,
+        source_authors: authors,
+        source_fingerprint: fp,
+        importance: Math.min(10, Math.max(1, Number(a.importance) || 5)),
+        status: 'published',
+        byline: String(a.byline || 'MuseNews Desk').slice(0, 80),
+        published_at: new Date().toISOString(),
+      };
+
+      if (DRY) {
+        console.log('[dry-run]', row.section, row.title, `(${postIds.length} sources)`);
+        written += 1;
+        continue;
+      }
+
+      await insertArticle(row);
+      console.log(
+        '[musenews] published',
+        row.section,
+        row.title,
+        `· sources=${postIds.length} · ${channels.join(',') || 'n/a'}`,
+      );
       written += 1;
-      continue;
+    } catch (e) {
+      rejected += 1;
+      console.warn(`[musenews] reject "${label}" — insert/error:`, e instanceof Error ? e.message : e);
     }
-
-    await insertArticle(row);
-    console.log('[musenews] published', row.section, row.title);
-    written += 1;
   }
 
   if (!DRY) await saveSeen(newlySeen);
-  console.log(`[musenews] done — wrote ${written}`);
+  console.log(`[musenews] done — wrote ${written}, rejected ${rejected}, proposed ${articles.length}`);
 }
 
 main().catch((err) => {

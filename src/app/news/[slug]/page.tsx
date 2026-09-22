@@ -1,7 +1,11 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { CoverImage } from "@/components/CoverImage";
 import { Masthead, SiteFooter } from "@/components/Masthead";
+import { ShareArticle } from "@/components/ShareArticle";
 import { getArticleBySlug, listMoreArticles, excerpt } from "@/lib/articles";
+import { absoluteUrl } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
@@ -15,12 +19,55 @@ function formatWhen(iso: string | null | undefined) {
   });
 }
 
+export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
+  const article = await getArticleBySlug(params.slug);
+  if (!article) {
+    return { title: "Not found · MuseNews" };
+  }
+
+  const description = (article.dek || excerpt(article.body, 36) || "From the MuseNews desk.").trim();
+  const path = `/news/${article.slug}`;
+  const cover = article.cover_url
+    ? [{ url: article.cover_url, width: 1024, height: 1024, alt: article.title }]
+    : [
+        {
+          url: absoluteUrl("/brand/og-default-1200.jpg"),
+          width: 1200,
+          height: 675,
+          alt: "MuseNews",
+        },
+      ];
+
+  return {
+    title: `${article.title} · MuseNews`,
+    description,
+    alternates: { canonical: path },
+    openGraph: {
+      type: "article",
+      url: path,
+      title: article.title,
+      description,
+      siteName: "MuseNews",
+      publishedTime: article.published_at || undefined,
+      authors: article.byline ? [article.byline] : ["MuseNews Desk"],
+      images: cover,
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: article.title,
+      description,
+      images: cover.map((img) => img.url),
+    },
+  };
+}
+
 export default async function ArticlePage({ params }: { params: { slug: string } }) {
   const article = await getArticleBySlug(params.slug);
   if (!article) notFound();
 
   const paragraphs = article.body.split(/\n\n+/).filter(Boolean);
   const { next, more } = await listMoreArticles(article, 9);
+  const shareUrl = absoluteUrl(`/news/${article.slug}`);
 
   return (
     <div className="sheet">
@@ -34,10 +81,10 @@ export default async function ArticlePage({ params }: { params: { slug: string }
         <p className="byline">
           {article.byline || "MuseNews Desk"} · {formatWhen(article.published_at)}
         </p>
+        <ShareArticle title={article.title} dek={article.dek} url={shareUrl} />
         {article.cover_url ? (
           <figure className="cover-frame">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img className="cover" src={article.cover_url} alt="" />
+            <CoverImage src={article.cover_url} variant="hero" priority />
             <figcaption className="cover-caption">Illustration · MuseNews Desk</figcaption>
           </figure>
         ) : null}
@@ -48,6 +95,7 @@ export default async function ArticlePage({ params }: { params: { slug: string }
             </p>
           ))}
         </div>
+        <ShareArticle title={article.title} dek={article.dek} url={shareUrl} />
         {(article.source_authors?.length || article.source_post_ids?.length) && (
           <div className="sources">
             <p>
@@ -93,8 +141,7 @@ export default async function ArticlePage({ params }: { params: { slug: string }
                 {more.map((a) => (
                   <Link key={a.id} href={`/news/${a.slug}`} className="more-news-card">
                     {a.cover_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img className="more-news-thumb" src={a.cover_url} alt="" />
+                      <CoverImage src={a.cover_url} variant="thumb" />
                     ) : (
                       <div className="more-news-thumb placeholder" aria-hidden />
                     )}

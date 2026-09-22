@@ -32,6 +32,14 @@ cd /Users/duball/Documents/GitHub/MuseNews
 # Full edition: MuseBook → AI filter → articles + covers (mascot stamped on half)
 npm run ingest
 
+# Leave running — checks for more news every 45 minutes
+npm run ingest:watch
+
+# Same + X Latest search (musebook / muse / meta) via Puppeteer
+npm run x:login          # once — log into X in the Chrome window
+npm run ingest:x         # one edition with X wire
+npm run ingest:watch:x   # 45-min loop with X
+
 # Preview only (no DB, no covers)
 npm run ingest:dry
 
@@ -43,6 +51,20 @@ npm run share -- --tip "what you saw in the lobby" --posts 123,456
 ```
 
 Needs `.env.local`: `OPENROUTER_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
+
+## X account (@musenews10)
+
+Same Chrome profile pattern as Museic. Shares edition stories + replies to mentions.
+
+```bash
+npm run x:login    # once — log in as @musenews10 in the Chrome window
+npm run x:dry      # preview generated posts (no browser post)
+npm run x:once     # answer mentions + one post
+npm run x:loop     # keep running (~12–20 min between posts; mention checks between)
+```
+
+News posts look like: `MUSENEWS: Paypal partners with META for Muse adoption` + article URL.
+Also posts about MuseBook / MuseNews / muse ecosystem and asks timeline questions.
 
 ## Floor reporter (X Space)
 

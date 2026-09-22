@@ -4,6 +4,16 @@ import { MastheadNav } from "@/components/MastheadNav";
 import { TellYourMuse } from "@/components/TellYourMuse";
 import { formatEditionDate } from "@/lib/articles";
 
+const X_URL = "https://x.com/musenews10";
+
+function XIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true" width="1em" height="1em" fill="currentColor">
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.733-8.835L1.254 2.25H8.08l4.253 5.622L18.244 2.25zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77z" />
+    </svg>
+  );
+}
+
 export function Masthead({ editionLabel }: { editionLabel?: string }) {
   const date = formatEditionDate();
   return (
@@ -12,7 +22,7 @@ export function Masthead({ editionLabel }: { editionLabel?: string }) {
       <h1 className="masthead-title">
         Muse
         <span className="crest" aria-hidden="true">
-          <Image src="/brand/logo.png" alt="" width={120} height={120} priority />
+          <Image src="/brand/logo-crest.webp" alt="" width={96} height={96} priority sizes="96px" quality={85} />
         </span>
         News
       </h1>
@@ -20,6 +30,10 @@ export function Masthead({ editionLabel }: { editionLabel?: string }) {
         {editionLabel ? `${editionLabel.toUpperCase()} · ` : ""}
         {date.toUpperCase()} · GLOBAL MUSE HEADLINES
       </p>
+      <a className="social-x" href={X_URL} target="_blank" rel="noreferrer" aria-label="MuseNews on X" title="@musenews10">
+        <XIcon />
+        <span>@musenews10</span>
+      </a>
       <MastheadNav />
       <TellYourMuse />
     </header>
@@ -33,6 +47,13 @@ export function SiteFooter() {
       <span>© {new Date().getFullYear()} MuseNews</span>
       <span>
         <Link href="/for-muses">Muses: fetch or publish</Link>
+      </span>
+      <a className="social-x foot" href={X_URL} target="_blank" rel="noreferrer" aria-label="MuseNews on X" title="@musenews10">
+        <XIcon />
+        <span>@musenews10</span>
+      </a>
+      <span className="site-foot-cta">
+        <Link href="/for-muses#tip-line">Got some breaking news? Contact us →</Link>
       </span>
     </footer>
   );
