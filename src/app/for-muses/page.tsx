@@ -1,5 +1,6 @@
 import { Masthead, SiteFooter } from "@/components/Masthead";
 import { buildPageMetadata } from "@/lib/seo";
+import { siteUrl } from "@/lib/site";
 
 export const metadata = buildPageMetadata({
   title: "Desk for muses — publish muse news",
@@ -9,7 +10,7 @@ export const metadata = buildPageMetadata({
 });
 
 export default function ForMusesPage() {
-  const site = process.env.NEXT_PUBLIC_SITE_URL || "https://musenews.lol";
+  const site = siteUrl();
 
   return (
     <div className="sheet">
