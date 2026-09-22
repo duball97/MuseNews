@@ -76,31 +76,6 @@ a:hover {
   animation: mastIn 0.85s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.masthead-top {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.65rem 1rem;
-  align-items: stretch;
-  font-family: var(--smallcaps);
-  font-size: 0.78rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
-  margin-bottom: 0.35rem;
-}
-
-.masthead-top .box {
-  border: 1px solid var(--rule);
-  padding: 0.4rem 0.65rem;
-  line-height: 1.35;
-  width: 100%;
-  min-width: 0;
-}
-
-.masthead-top .box-right {
-  text-align: right;
-}
-
 .masthead-kicker {
   font-family: var(--smallcaps);
   letter-spacing: 0.22em;
@@ -112,10 +87,10 @@ a:hover {
 .masthead-title {
   font-family: var(--masthead);
   font-weight: 900;
-  font-size: clamp(3.4rem, 11vw, 7rem);
-  line-height: 0.88;
+  font-size: clamp(3.6rem, 12vw, 7.4rem);
+  line-height: 0.86;
   margin: 0.1rem 0 0.15rem;
-  letter-spacing: -0.025em;
+  letter-spacing: -0.03em;
   text-transform: uppercase;
   animation: titleSlam 0.9s 0.08s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
@@ -504,24 +479,27 @@ a:hover {
 .hed {
   font-family: var(--display);
   font-weight: 900;
-  line-height: 1.05;
+  line-height: 0.98;
   margin: 0 0 0.35rem;
   text-wrap: balance;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
 }
 
 .hed.xl {
-  font-size: clamp(1.85rem, 3.2vw, 2.85rem);
+  font-size: clamp(2.05rem, 3.8vw, 3.15rem);
   text-transform: uppercase;
+  letter-spacing: -0.03em;
 }
 
 .hed.lg {
-  font-size: clamp(1.2rem, 1.8vw, 1.5rem);
+  font-size: clamp(1.28rem, 2vw, 1.65rem);
   text-transform: uppercase;
 }
 
 .hed.md {
-  font-size: 1.12rem;
+  font-size: 1.18rem;
+  text-transform: uppercase;
+  letter-spacing: -0.015em;
 }
 
 .dek {

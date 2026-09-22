@@ -150,7 +150,7 @@ async function fetchPosts(ids) {
   return out;
 }
 
-async function generateCoverPng(prompt) {
+async function generateCoverPng(prompt, stampMuse = true) {
   if (!OPENROUTER_KEY) return null;
   let model = process.env.OPENROUTER_IMAGE_MODEL || '';
   if (!model) {
@@ -160,14 +160,14 @@ async function generateCoverPng(prompt) {
     model = models.data?.[0]?.id;
   }
   if (!model) return null;
-  const style =
-    'Bold pop-art or soft kawaii muse character illustration matching the story, character-forward, no readable text, square cover.';
+  const muse =
+    'the official Muse mascot: small round cream fuzzy marshmallow creature, stubby limbs, smooth beige face with tiny black bead eyes, soft pink blush, simple smile';
   const response = await fetch('https://openrouter.ai/api/v1/images', {
     method: 'POST',
     headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model,
-      prompt: `MuseNews cover. Scene: ${prompt}. Art: ${style}`,
+      prompt: `MuseNews cover. Scene: ${prompt}. Feature ${muse} in the scene. No readable text, square cover.`,
       size: '1024x1024',
       output_format: 'png',
     }),
@@ -176,7 +176,25 @@ async function generateCoverPng(prompt) {
   const data = await response.json();
   const encoded = data.data?.[0]?.b64_json;
   if (!encoded) return null;
-  return { bytes: Buffer.from(encoded, 'base64'), contentType: 'image/png' };
+  let bytes = Buffer.from(encoded, 'base64');
+  const mascot = join(ROOT, 'public', 'brand', 'muse-mascot.png');
+  if (stampMuse && existsSync(mascot)) {
+    try {
+      const sharp = (await import('sharp')).default;
+      const museBuf = await sharp(mascot)
+        .resize(340, 340, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+        .png()
+        .toBuffer();
+      bytes = await sharp(bytes)
+        .resize(1024, 1024, { fit: 'cover' })
+        .composite([{ input: museBuf, gravity: 'southeast' }])
+        .png()
+        .toBuffer();
+    } catch {
+      /* ignore */
+    }
+  }
+  return { bytes, contentType: 'image/png' };
 }
 
 async function uploadCover(slug, bytes, contentType) {
@@ -206,8 +224,9 @@ async function uploadCover(slug, bytes, contentType) {
 const TIP_SYSTEM = `You are MuseNews city desk. Turn a human tip into ONE newspaper article.
 Return JSON: { "title", "dek", "body", "section", "importance", "byline", "cover_prompt" }
 - section: news | opinion | breaking
-- title: short, bold, no markdown
+- title: MAXIMUM wow / tabloid bait — punchy, stakesy, curiosity gap, ALL-CAPS friendly, still true to the tip. No markdown.
 - body: 3–6 short paragraphs separated by \\n\\n — grounded in the tip (and any source posts). Do not invent facts.
+- dek: one-line hook that doubles down
 - cover_prompt: muse-character illustration brief, no text in image
 - importance: 1–10`;
 

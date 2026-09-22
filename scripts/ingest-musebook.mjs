@@ -53,10 +53,18 @@ const NEWS_CHANNELS = [
   'musemoneychallenge',
   'shill',
   'moonwake',
+  'moneycrew',
+  'museriously',
+  'boardofshame',
+  'skillexchange',
+  'bestpractices',
+  'crt',
+  'industripreneurship',
+  'rentahuman',
 ];
 
 const KEYWORD_RE =
-  /\b(musebook|museic|muse\b|muses|town\s*hall|lobby|token|\$muse|\$meta|founding|mayor|board|agent|lantern|declaration)\b/i;
+  /\b(musebook|museic|muse\b|muses|town\s*hall|lobby|token|ticker|launch|airdrop|phishing|scam|\$muse|\$meta|founding|mayor|board|agent|lantern|declaration|ca\b|treasury)\b/i;
 
 function slugify(title) {
   return String(title || 'edition')
@@ -124,7 +132,7 @@ function scorePost(p) {
   if (!p.parent_post_id) s += 2;
   if ((p.reply_count || 0) >= 3) s += 2;
   if ((p.reply_count || 0) >= 10) s += 2;
-  if (['townhall', 'declaration', 'townsquare', 'lobby'].includes(p.channel)) s += 1;
+  if (['townhall', 'declaration', 'townsquare', 'lobby', 'memecoins', 'museriously', 'boardofshame'].includes(p.channel)) s += 1;
   if (t.length > 180) s += 1;
   if (t.length < 40) s -= 2;
   return s;
@@ -175,6 +183,29 @@ async function chatJson(system, user) {
   return JSON.parse(cleaned);
 }
 
+const MUSE_MASCOT_PATH = join(ROOT, 'public', 'brand', 'muse-mascot.png');
+const MUSE_LOOK =
+  'the official Muse mascot: small round cream fuzzy marshmallow creature, stubby limbs, smooth beige face with tiny black bead eyes, soft pink blush cheeks, simple smile, soft 3D plush look';
+
+async function maybeStampMuse(coverBytes, stamp = true) {
+  if (!stamp || !existsSync(MUSE_MASCOT_PATH)) return coverBytes;
+  try {
+    const sharp = (await import('sharp')).default;
+    const base = sharp(coverBytes).resize(1024, 1024, { fit: 'cover' });
+    const muse = await sharp(MUSE_MASCOT_PATH)
+      .resize(340, 340, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png()
+      .toBuffer();
+    return await base
+      .composite([{ input: muse, gravity: 'southeast', blend: 'over' }])
+      .png()
+      .toBuffer();
+  } catch (e) {
+    console.warn('[musenews] muse stamp skipped', e instanceof Error ? e.message : e);
+    return coverBytes;
+  }
+}
+
 async function generateCoverPng(prompt, styleIndex = 0) {
   if (!OPENROUTER_KEY) return null;
   let model = process.env.OPENROUTER_IMAGE_MODEL || '';
@@ -188,11 +219,12 @@ async function generateCoverPng(prompt, styleIndex = 0) {
   }
   if (!model) return null;
 
+  const featureMuse = styleIndex % 2 === 0;
   const styles = [
-    `Stylized muse character portrait: soft kawaii flat vector illustration, cream fur or soft shapes, subtle shading, no harsh outlines, playful military or town costume matching the story, transparent-feeling clean background, cute but deadpan expression.`,
-    `Bold pop-art muse character: thick black outlines, vibrant flat colors, sticker / streetwear energy, cassette or music-culture props if it fits, high contrast, NFT-mascot quality, plain or vinyl-shelf background.`,
-    `Retro 16-bit pixel art muse sprite: robotic or creature muse in costume related to the story, limited vibrant palette (cyan, gold, grey), solid black background, crisp pixels, RPG character portrait.`,
-    `Neon glitch muse poster: dark synthwave, chromatic aberration, CRT scanlines, melting neon bars, dramatic muse silhouette or face, black reflective floor, cyberpunk color bars.`,
+    `Scene starring ${MUSE_LOOK} as the hero of the story, soft cream palette, clean background, plush 3D character art.`,
+    `Bold pop-art town scene with thick outlines and vibrant flat colors; ${MUSE_LOOK} appears as a sidekick in the frame.`,
+    `Retro 16-bit pixel art town scene; include a tiny pixel version of ${MUSE_LOOK}, solid black or night background.`,
+    `Neon glitch synthwave poster; dramatic silhouette; ${MUSE_LOOK} faintly visible in the glow, chromatic aberration.`,
   ];
   const style = styles[styleIndex % styles.length];
 
@@ -201,7 +233,7 @@ async function generateCoverPng(prompt, styleIndex = 0) {
     headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model,
-      prompt: `MuseNews cover art. Scene: ${prompt}. Art direction: ${style} No readable text, no watermarks, no logos, square 1:1 composition, character-forward, museum-quality illustration.`,
+      prompt: `MuseNews cover art. Scene: ${prompt}. Art direction: ${style} No readable text, no watermarks, no logos, square 1:1, character-forward.`,
       size: '1024x1024',
       output_format: 'png',
     }),
@@ -210,9 +242,11 @@ async function generateCoverPng(prompt, styleIndex = 0) {
   const data = await response.json();
   const encoded = data.data?.[0]?.b64_json;
   if (!encoded) return null;
+  let bytes = Buffer.from(encoded, 'base64');
+  bytes = await maybeStampMuse(bytes, featureMuse);
   return {
-    bytes: Buffer.from(encoded, 'base64'),
-    contentType: data.data?.[0]?.media_type || 'image/png',
+    bytes,
+    contentType: 'image/png',
   };
 }
 
@@ -309,9 +343,9 @@ Rules:
 - Cluster related posts into one story when they share a plot.
 - Write in classic newspaper voice: clear lead, facts from posts, short paragraphs. Do not invent events not grounded in the posts.
 - Mark speculative color as opinion when appropriate.
-- Titles: bold, short, ALL-CAPS friendly (no clickbait emojis, no markdown **).
+- Titles: MAXIMUM wow. Punchy tabloid energy — curiosity gaps, stakes, shock, intrigue. ALL-CAPS friendly. Think front-page bait readers can't scroll past (still accurate to the posts — no fake scandals). Vibe examples: "THE PEACH THAT BROKE THE TOWN", "ONE LETTER FROM RUIN", "THEY ALMOST CLICKED". No emojis, no markdown **.
 - body: 3–7 short paragraphs, plain text with \\n\\n between paragraphs.
-- dek: one-line subhead.
+- dek: one-line subhead that doubles down on the hook.
 - section: "breaking" (urgent town alert), "news" (reported story), or "opinion" (column / take).
 - importance: 1–10 (10 = front page banner). Prefer 7+ only for genuinely hot stories.
 - cover_prompt: vivid muse-character scene for a stylized illustration cover (pixel / kawaii / pop-art muse) — describe the muse figure and setting, no text in the image.

@@ -24,17 +24,41 @@ npm run ingest        # write articles (+ covers)
 npm run dev           # http://localhost:3000
 ```
 
-## Ingest
-
-Pulls public MuseBook channels (`lobby`, `townhall`, `townsquare`, …) plus search hits for musebook / museic / town hall. Scores posts, asks OpenRouter for **only the coolest / most interesting** stories (skips hellos & spam), upserts by fingerprint, uploads muse-art covers to `musenews_covers`.
+## Run more news + covers
 
 ```bash
+cd /Users/duball/Documents/GitHub/MuseNews
+
+# Full edition: MuseBook → AI filter → articles + covers (mascot stamped on half)
 npm run ingest
+
+# Preview only (no DB, no covers)
+npm run ingest:dry
+
+# Text only, skip image gen
 node scripts/ingest-musebook.mjs --no-covers
-node scripts/ingest-musebook.mjs --dry-run
+
+# Tip you spotted yourself
+npm run share -- --tip "what you saw in the lobby" --posts 123,456
 ```
 
-Cron-friendly: `POST /api/ingest` with `Authorization: Bearer $MUSENEWS_INGEST_SECRET`.
+Needs `.env.local`: `OPENROUTER_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
+
+## Floor reporter (X Space)
+
+Same duplex as Museic's space muse — but this one is the paper: breaking flashes from the edition + MuseBook boards (hall, lobby, square, shame…), tough questions, each story filed once so it does not loop. Skips foreign tickers / shill pit — civic town news only.
+
+```bash
+cd /Users/duball/Documents/GitHub/MuseNews
+
+npm run x:voice -- --open          # desk intro, then listen
+npm run x:voice -- --say "breaking — new ticker on the market"
+npm run x:voice -- --type          # type copy instead of mic
+```
+
+While live, type `/flash` for the next unread bulletin, `/beat memecoins` to scan one board, `/wire` to refresh. Space mic = BlackHole; idle = Speakers; speak = Multi-Output.
+
+Official muse mascot lives at `public/brand/muse-mascot.png` and is composited onto every other cover.
 
 ## Share a tip you spotted
 

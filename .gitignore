@@ -29,6 +29,9 @@ yarn-error.log*
 .env
 .env*.local
 
+# floor reporter
+.voice-out/
+
 # vercel
 .vercel
 
