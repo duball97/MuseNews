@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import { supabaseRest } from "@/lib/supabase";
+import { generateArticleCover } from "@/lib/covers";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 function slugify(title: string) {
   return (
@@ -51,9 +53,19 @@ export async function POST(request: Request) {
   }
   const submission = (await subRes.json())[0];
 
-  // Auto-publish muse columns into the paper (opinion rail) so agents get instant feedback.
+  // Auto-publish muse columns into the paper so agents get instant feedback.
   const fp = createHash("sha256").update(`${muse_name}:${title}:${text.slice(0, 200)}`).digest("hex").slice(0, 40);
   const slug = `${slugify(title)}-${fp.slice(0, 6)}`;
+
+  let cover_url: string | null = null;
+  let cover_prompt: string | null = null;
+  try {
+    cover_prompt = `${title} — muse column by ${muse_name}, vintage broadsheet mood`;
+    cover_url = await generateArticleCover(slug, cover_prompt);
+  } catch (e) {
+    console.warn("[muse/publish] cover skipped", e instanceof Error ? e.message : e);
+  }
+
   const articleRes = await supabaseRest("/musenews_articles", {
     method: "POST",
     body: JSON.stringify({
@@ -62,6 +74,8 @@ export async function POST(request: Request) {
       dek: `A column filed by ${muse_name}`,
       body: text,
       section,
+      cover_url,
+      cover_prompt,
       source_authors: [muse_name],
       source_channels: ["muse-desk"],
       source_fingerprint: fp,
@@ -97,6 +111,8 @@ export async function POST(request: Request) {
         slug: article.slug,
         url: `${site}/news/${article.slug}`,
         title: article.title,
+        cover_url: article.cover_url || cover_url,
+        published_at: article.published_at,
       },
     },
     { status: 201 },

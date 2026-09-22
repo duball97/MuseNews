@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { uploadCover } from "@/lib/supabase";
 
@@ -55,7 +55,8 @@ export async function generateArticleCover(slug: string, scene: string) {
   const encoded = data.data?.[0]?.b64_json;
   if (!encoded) return null;
 
-  let bytes = Buffer.from(encoded, "base64");
-  bytes = await stampMuse(bytes);
-  return uploadCover(`covers/${slug}-${Date.now()}.png`, bytes, "image/png");
+  let bytes: Buffer = Buffer.from(encoded, "base64");
+  bytes = Buffer.from(await stampMuse(bytes));
+  const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  return uploadCover(`covers/${slug}-${Date.now()}.png`, ab, "image/png");
 }

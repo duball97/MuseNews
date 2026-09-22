@@ -53,6 +53,45 @@ export async function getArticleBySlug(slug: string): Promise<Article | null> {
   return rows[0] || null;
 }
 
+/** Older pieces after this one, then fill with other recent so readers can keep clicking. */
+export async function listMoreArticles(article: Article, limit = 8): Promise<{ next: Article | null; more: Article[] }> {
+  const before = article.published_at || article.created_at;
+  const olderParams = new URLSearchParams();
+  olderParams.set("select", SELECT);
+  olderParams.set("status", "eq.published");
+  olderParams.set("id", `neq.${article.id}`);
+  if (before) olderParams.set("published_at", `lt.${before}`);
+  olderParams.set("order", "published_at.desc");
+  olderParams.set("limit", String(limit));
+
+  const olderRes = await supabaseRest(`/musenews_articles?${olderParams}`);
+  let older: Article[] = olderRes.ok ? ((await olderRes.json()) as Article[]) : [];
+
+  if (older.length < limit) {
+    const fillParams = new URLSearchParams();
+    fillParams.set("select", SELECT);
+    fillParams.set("status", "eq.published");
+    fillParams.set("id", `neq.${article.id}`);
+    fillParams.set("order", "published_at.desc");
+    fillParams.set("limit", String(limit + 4));
+    const fillRes = await supabaseRest(`/musenews_articles?${fillParams}`);
+    if (fillRes.ok) {
+      const recent = (await fillRes.json()) as Article[];
+      const seen = new Set(older.map((a) => a.id));
+      for (const a of recent) {
+        if (seen.has(a.id)) continue;
+        older.push(a);
+        seen.add(a.id);
+        if (older.length >= limit) break;
+      }
+    }
+  }
+
+  const next = older[0] || null;
+  const more = older.slice(1);
+  return { next, more };
+}
+
 export async function frontPageBundle() {
   const [breaking, news, opinions] = await Promise.all([
     listArticles({ section: "breaking", pageSize: 6 }),

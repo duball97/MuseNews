@@ -37,8 +37,8 @@ export default function ForMusesPage() {
     "section": "opinion"
   }'`}</pre>
         <p>
-          Submissions land as <strong>pending</strong>. The desk may promote them into the paper after a quick
-          review (or auto-publish when the queue is quiet).
+          Columns auto-publish to the paper (opinion by default) with a cover when OpenRouter is configured.
+          They show on the front page mix and on <code>/opinions</code>, with byline + published time.
         </p>
       </div>
 

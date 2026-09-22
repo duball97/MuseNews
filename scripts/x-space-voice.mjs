@@ -106,13 +106,14 @@ const SIDE_BOARDS = [
   'shill',
 ];
 
-/** Town-native money only — everything else is off-desk. */
-const TOWN_TICKER_RE = /\$?(musebook|museic|meta|wren)\b/i;
+/** Avoid foreign tickers entirely. $MUSEBOOK only if the civic story needs it. */
+const TOWN_TICKER_RE = /\$?musebook\b/i;
 const FOREIGN_TICKER_RE = /\$[a-z][a-z0-9]{2,}\b/gi;
 const NEWS_RE =
-  /\b(phishing|scam|lookalike|drain|hack|acquired?|acquisition|treasury|grant|seal|receipt|cold-?walk|vote|proposal|governance|burn|fee wallet|musebook|museic|declaration|lantern)\b/i;
+  /\b(phishing|scam|lookalike|drain|hack|acquired?|acquisition|treasury|grant|seal|receipt|cold-?walk|vote|proposal|governance|burn|fee wallet|musebook|declaration|lantern|town\s*hall)\b/i;
 const SKIP_RE = /^(gm|gn|hello|hey|hi there|just checking in|good morning)\b/i;
 const FAITH_SPAM_RE = /\bwould you join the faith\b/i;
+const BANNED_TOKEN_RE = /\b(\$museic|\$wren|\$meta|museic\s*token|wren\s*token)\b/i;
 
 const FETCH_HEADERS = {
   Accept: 'application/json',
@@ -126,10 +127,10 @@ WHO YOU ARE
 - You do not shill songs, rooms, or coins. You report, then you ask the question nobody wanted.
 
 TOKEN RULE — hard line
-- Prefer civic news: governance, receipts, seals, acquisitions, phishing lookalikes, Museic×MuseBook, lantern/town events.
-- Do NOT pitch or break on random memecoins / foreign tickers ($FCAT, drive-by launches, shill pit). Skip them.
-- Town money only when the story needs it: $MUSEBOOK, $MUSEIC, $META, maybe $WREN as town infrastructure — never as a buy signal.
-- If the wire is mostly other tokens, say the wire is quiet on town news and ask a tough civic question instead.
+- Prefer civic news: governance, receipts, seals, acquisitions, phishing lookalikes, lantern/town events.
+- Do NOT name or pitch other tokens. Never say $WREN, $MUSEIC, $META, $FCAT, or any foreign ticker.
+- $MUSEBOOK only if the civic story truly needs it — never as a buy signal. If unsure, leave the ticker out.
+- If the wire is mostly coin pitches, say the wire is quiet on town news and ask a tough civic question instead.
 
 VIBE
 - Late-night desk, not CNN panic. One fact, then one cut. Sound like a person who has already read the room.
@@ -482,7 +483,8 @@ function foreignTickerCount(text) {
 
 function isForeignTokenPitch(p) {
   const t = String(p.text || p.title || '');
-  if (TOWN_TICKER_RE.test(t) && /\b(musebook|museic|treasury|acquisition|fee|burn|receipt)\b/i.test(t)) {
+  if (BANNED_TOKEN_RE.test(t) && !/\b(phishing|scam|lookalike)\b/i.test(t)) return true;
+  if (TOWN_TICKER_RE.test(t) && /\b(musebook|treasury|acquisition|fee|burn|receipt|governance)\b/i.test(t)) {
     return false;
   }
   if (/\b(phishing|scam|lookalike|drain|fake\s+account|board\s+of\s+shame)\b/i.test(t)) return false;
@@ -761,7 +763,7 @@ async function replyToAudioBuffer(wavBuf, { heardText = '', memory = [] } = {}) 
   const rules = `Hard rules:
 - Cool reporter. Answer first. One story max. One tough question max, and only if it cuts.
 - Do not re-read ALREADY FILED items. If they want "the news", use a [NEW] item or say the wire is quiet.
-- Skip other tokens / memecoin pitches. Town civic beats only ($MUSEBOOK / $MUSEIC / $META when needed).
+- Skip other tokens / memecoin pitches. Never say $WREN, $MUSEIC, or $META. Civic beats only.
 - Vary wording. No template openers.
 - Never lie. Never invent a CA/price. Never shill a buy.
 - ALWAYS English unless they clearly asked another language.
@@ -1260,7 +1262,7 @@ LIVE terminal:
   /beat townhall                          # scan one board
   /quit
 
-Reporter covers civic MuseBook news — skips foreign tickers / shill pit.
+Reporter covers civic MuseBook news — no $WREN / $MUSEIC / foreign tickers.
 Each story is filed once this Space. Quiet room + a hot new beat → auto flash.
 Routing: Space mic = BlackHole; idle = Speakers; speak = Multi-Output.
 `);
