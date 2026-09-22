@@ -2,11 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CoverImage } from "@/components/CoverImage";
+import { JsonLd } from "@/components/JsonLd";
 import { Masthead, SiteFooter } from "@/components/Masthead";
 import { MuseEngage } from "@/components/MuseEngage";
 import { ShareArticle } from "@/components/ShareArticle";
 import { getArticleBySlug, listMoreArticles, excerpt } from "@/lib/articles";
 import { getEngageBundle } from "@/lib/engage";
+import { newsArticleJsonLd, SITE_KEYWORDS, SITE_NAME } from "@/lib/seo";
 import { absoluteUrl } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
@@ -27,36 +29,47 @@ export async function generateMetadata({ params }: { params: { slug: string } })
     return { title: "Not found · MuseNews" };
   }
 
-  const description = (article.dek || excerpt(article.body, 36) || "From the MuseNews desk.").trim();
+  const description = (
+    article.dek ||
+    excerpt(article.body, 36) ||
+    `${article.title} — muse news on MuseNews, from the MuseBook town wire.`
+  ).trim();
   const path = `/news/${article.slug}`;
   const cover = article.cover_url
-    ? [{ url: article.cover_url, width: 1024, height: 1024, alt: article.title }]
+    ? [{ url: article.cover_url, width: 1024, height: 1024, alt: `${article.title} · MuseNews` }]
     : [
         {
           url: absoluteUrl("/brand/og-default-1200.jpg"),
           width: 1200,
           height: 675,
-          alt: "MuseNews",
+          alt: "MuseNews — muse news",
         },
       ];
 
   return {
-    title: `${article.title} · MuseNews`,
+    title: { absolute: `${article.title} · MuseNews` },
     description,
+    keywords: [
+      ...SITE_KEYWORDS,
+      article.section,
+      article.byline || "MuseNews Desk",
+      ...(article.source_authors || []).slice(0, 4),
+    ].filter(Boolean) as string[],
     alternates: { canonical: path },
     openGraph: {
       type: "article",
       url: path,
-      title: article.title,
+      title: `${article.title} · MuseNews`,
       description,
-      siteName: "MuseNews",
+      siteName: SITE_NAME,
       publishedTime: article.published_at || undefined,
       authors: article.byline ? [article.byline] : ["MuseNews Desk"],
       images: cover,
+      tags: ["MuseNews", "muse news", "MuseBook", article.section].filter(Boolean),
     },
     twitter: {
       card: "summary_large_image",
-      title: article.title,
+      title: `${article.title} · MuseNews`,
       description,
       images: cover.map((img) => img.url),
     },
@@ -76,6 +89,7 @@ export default async function ArticlePage({ params }: { params: { slug: string }
 
   return (
     <div className="sheet">
+      <JsonLd data={newsArticleJsonLd(article)} />
       <Masthead />
       <article className="article-page">
         <p className="byline">
@@ -101,7 +115,7 @@ export default async function ArticlePage({ params }: { params: { slug: string }
         <ShareArticle title={article.title} dek={article.dek} url={shareUrl} />
         {article.cover_url ? (
           <figure className="cover-frame">
-            <CoverImage src={article.cover_url} variant="hero" priority />
+            <CoverImage src={article.cover_url} variant="hero" priority alt={`${article.title} — MuseNews`} />
             <figcaption className="cover-caption">Illustration · MuseNews Desk</figcaption>
           </figure>
         ) : null}
@@ -145,7 +159,7 @@ export default async function ArticlePage({ params }: { params: { slug: string }
       </article>
 
       {(next || more.length > 0) && (
-        <section className="more-news" aria-label="More news">
+        <section className="more-news" aria-label="More muse news">
           {next ? (
             <Link href={`/news/${next.slug}`} className="more-news-next">
               <p className="section-label">Next</p>
@@ -165,7 +179,7 @@ export default async function ArticlePage({ params }: { params: { slug: string }
                 {more.map((a) => (
                   <Link key={a.id} href={`/news/${a.slug}`} className="more-news-card">
                     {a.cover_url ? (
-                      <CoverImage src={a.cover_url} variant="thumb" />
+                      <CoverImage src={a.cover_url} variant="thumb" alt={a.title} />
                     ) : (
                       <div className="more-news-thumb placeholder" aria-hidden />
                     )}

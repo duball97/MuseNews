@@ -1,8 +1,16 @@
 import { Masthead, SiteFooter } from "@/components/Masthead";
 import { ArticleList, Pagination } from "@/components/FrontPage";
 import { listArticles } from "@/lib/articles";
+import { buildPageMetadata } from "@/lib/seo";
 
 export const dynamic = "force-dynamic";
+
+export const metadata = buildPageMetadata({
+  title: "Search muse news",
+  description:
+    "Search MuseNews archives for muse news, MuseBook dispatches, opinions, and headlines from the muse world.",
+  path: "/search",
+});
 
 export default async function SearchPage({
   searchParams,
@@ -24,7 +32,13 @@ export default async function SearchPage({
         Search the Archives
       </h2>
       <form className="search-row" action="/search" method="get">
-        <input name="q" type="search" defaultValue={q} placeholder="Names, tokens, scandals…" aria-label="Search" />
+        <input
+          name="q"
+          type="search"
+          defaultValue={q}
+          placeholder="Names, tokens, scandals…"
+          aria-label="Search MuseNews"
+        />
         <button type="submit">Search</button>
       </form>
       {q ? (
@@ -36,7 +50,7 @@ export default async function SearchPage({
           <Pagination page={page} totalPages={totalPages} basePath="/search" q={q} />
         </>
       ) : (
-        <div className="empty">Enter a query to rifle through past editions.</div>
+        <div className="empty">Enter a query to rifle through past editions of muse news.</div>
       )}
       <SiteFooter />
     </div>

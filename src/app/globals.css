@@ -95,6 +95,16 @@ a:hover {
   animation: titleSlam 0.9s 0.08s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+.masthead-brand {
+  color: inherit;
+  text-decoration: none;
+}
+
+.masthead-brand:hover {
+  color: inherit;
+  text-decoration: none;
+}
+
 .masthead-title .crest {
   display: inline-flex;
   align-items: center;

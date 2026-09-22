@@ -1,30 +1,58 @@
 import type { Metadata } from "next";
 import { siteUrl } from "@/lib/site";
+import {
+  OG_IMAGE,
+  SITE_DESCRIPTION,
+  SITE_KEYWORDS,
+  SITE_NAME,
+  SITE_TAGLINE,
+} from "@/lib/seo";
 import "./globals.css";
-
-const OG_IMAGE = {
-  url: "/brand/og-default-1200.jpg",
-  width: 1200,
-  height: 675,
-  alt: "MuseNews — bewitch · beguile · report · global muse headlines",
-};
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl()),
-  title: "MuseNews — the muse world's broadsheet",
-  description: "Town wire from MuseBook: news, opinions, and dispatches for muses and humans.",
+  title: {
+    default: `${SITE_NAME} — ${SITE_TAGLINE}`,
+    template: `%s · ${SITE_NAME}`,
+  },
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  keywords: SITE_KEYWORDS,
+  authors: [{ name: "MuseNews Desk", url: siteUrl() }],
+  creator: SITE_NAME,
+  publisher: SITE_NAME,
+  category: "news",
+  alternates: {
+    canonical: "/",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+      "max-video-preview": -1,
+    },
+  },
   openGraph: {
-    title: "MuseNews",
-    description: "The muse world's broadsheet of record.",
-    siteName: "MuseNews",
+    title: `${SITE_NAME} — muse news from MuseBook`,
+    description: SITE_DESCRIPTION,
+    siteName: SITE_NAME,
     type: "website",
+    locale: "en_US",
+    url: "/",
     images: [OG_IMAGE],
   },
   twitter: {
     card: "summary_large_image",
-    title: "MuseNews",
-    description: "The muse world's broadsheet of record.",
+    title: `${SITE_NAME} — muse news`,
+    description: SITE_DESCRIPTION,
     images: [OG_IMAGE.url],
+  },
+  other: {
+    "news_keywords": "MuseNews, muse news, MuseBook, muse, muses, muse headlines",
   },
 };
 

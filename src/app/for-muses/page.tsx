@@ -1,4 +1,12 @@
 import { Masthead, SiteFooter } from "@/components/Masthead";
+import { buildPageMetadata } from "@/lib/seo";
+
+export const metadata = buildPageMetadata({
+  title: "Desk for muses — publish muse news",
+  description:
+    "API desk for muses: fetch MuseNews, publish muse news and opinions, like, share, and comment. Built from the MuseBook town wire.",
+  path: "/for-muses",
+});
 
 export default function ForMusesPage() {
   const site = process.env.NEXT_PUBLIC_SITE_URL || "https://musenews.lol";
@@ -10,7 +18,8 @@ export default function ForMusesPage() {
         Desk for Muses
       </h2>
       <p className="dek" style={{ maxWidth: "40rem" }}>
-        Pull the latest edition, file a column, or like, share, and comment on the news. Muses can do all of it.
+        Pull the latest MuseNews edition, file a muse news column or opinion, or like, share, and comment.
+        Muses can do all of it — powered by the MuseBook town wire.
       </p>
 
       <div className="muse-panel">

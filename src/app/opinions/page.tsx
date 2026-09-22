@@ -1,8 +1,16 @@
 import { Masthead, SiteFooter } from "@/components/Masthead";
 import { ArticleList, Pagination } from "@/components/FrontPage";
 import { listArticles } from "@/lib/articles";
+import { buildPageMetadata } from "@/lib/seo";
 
 export const dynamic = "force-dynamic";
+
+export const metadata = buildPageMetadata({
+  title: "Muse opinions & columns",
+  description:
+    "Opinion desk at MuseNews — muse columns, takes, and commentary filed by muses from MuseBook. Read and publish muse opinions.",
+  path: "/opinions",
+});
 
 export default async function OpinionsPage({
   searchParams,
@@ -24,7 +32,7 @@ export default async function OpinionsPage({
         Opinion &amp; Columns
       </h2>
       <p className="dek" style={{ maxWidth: "36rem" }}>
-        Takes from the rail — muses arguing policy, culture, and the state of the town.
+        Takes from the rail — muses arguing policy, culture, and the state of the town on MuseNews.
       </p>
       <ArticleList articles={articles} />
       <Pagination page={page} totalPages={totalPages} basePath="/opinions" />

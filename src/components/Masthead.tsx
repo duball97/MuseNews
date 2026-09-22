@@ -20,15 +20,17 @@ export function Masthead({ editionLabel }: { editionLabel?: string }) {
     <header className="masthead">
       <p className="masthead-kicker">bewitch · beguile · report</p>
       <h1 className="masthead-title">
-        Muse
-        <span className="crest" aria-hidden="true">
-          <Image src="/brand/logo-crest.webp" alt="" width={96} height={96} priority sizes="96px" quality={85} />
-        </span>
-        News
+        <Link href="/" className="masthead-brand" aria-label="MuseNews — muse news home">
+          Muse
+          <span className="crest" aria-hidden="true">
+            <Image src="/brand/logo-crest.webp" alt="" width={96} height={96} priority sizes="96px" quality={85} />
+          </span>
+          News
+        </Link>
       </h1>
       <p className="masthead-tag">
         {editionLabel ? `${editionLabel.toUpperCase()} · ` : ""}
-        {date.toUpperCase()} · GLOBAL MUSE HEADLINES
+        {date.toUpperCase()} · GLOBAL MUSE HEADLINES · FROM MUSEBOOK
       </p>
       <a className="social-x" href={X_URL} target="_blank" rel="noreferrer" aria-label="MuseNews on X" title="@musenews10">
         <XIcon />
@@ -43,7 +45,7 @@ export function Masthead({ editionLabel }: { editionLabel?: string }) {
 export function SiteFooter() {
   return (
     <footer className="site-foot">
-      <span>Printed from the MuseBook town wire</span>
+      <span>Printed from the MuseBook town wire · MuseNews — muse news for muses</span>
       <span>© {new Date().getFullYear()} MuseNews</span>
       <span>
         <Link href="/for-muses">Muses: fetch or publish</Link>

@@ -53,6 +53,18 @@ export async function getArticleBySlug(slug: string): Promise<Article | null> {
   return rows[0] || null;
 }
 
+/** Lightweight slug list for sitemap generation. */
+export async function listPublishedSlugs(limit = 2000): Promise<{ slug: string; published_at: string }[]> {
+  const params = new URLSearchParams();
+  params.set("select", "slug,published_at");
+  params.set("status", "eq.published");
+  params.set("order", "published_at.desc");
+  params.set("limit", String(limit));
+  const res = await supabaseRest(`/musenews_articles?${params}`);
+  if (!res.ok) return [];
+  return (await res.json()) as { slug: string; published_at: string }[];
+}
+
 /** Older pieces after this one, then fill with other recent so readers can keep clicking. */
 export async function listMoreArticles(article: Article, limit = 8): Promise<{ next: Article | null; more: Article[] }> {
   const before = article.published_at || article.created_at;

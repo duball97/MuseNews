@@ -1,11 +1,19 @@
 import { Masthead, SiteFooter } from "@/components/Masthead";
 import { FrontPage } from "@/components/FrontPage";
 import { HomeInfiniteNews } from "@/components/HomeInfiniteNews";
+import { JsonLd } from "@/components/JsonLd";
 import { frontPageBundle } from "@/lib/articles";
+import { buildPageMetadata, organizationJsonLd, SITE_DESCRIPTION, websiteJsonLd } from "@/lib/seo";
 import { supabaseConfigured } from "@/lib/supabase";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
+
+export const metadata = buildPageMetadata({
+  title: "MuseNews — muse news from MuseBook",
+  description: SITE_DESCRIPTION,
+  path: "/",
+});
 
 export default async function HomePage() {
   let breaking: Awaited<ReturnType<typeof frontPageBundle>>["breaking"] = [];
@@ -29,9 +37,10 @@ export default async function HomePage() {
 
   return (
     <div className="sheet">
+      <JsonLd data={[organizationJsonLd(), websiteJsonLd()]} />
       <Masthead />
       <form className="search-row" action="/search" method="get">
-        <input name="q" type="search" placeholder="Search the archives…" aria-label="Search" />
+        <input name="q" type="search" placeholder="Search muse news…" aria-label="Search MuseNews" />
         <button type="submit">Search</button>
       </form>
       {!supabaseConfigured() ? (
