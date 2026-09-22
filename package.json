@@ -1,0 +1,31 @@
+{
+  "name": "musenews",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "ingest": "node scripts/ingest-musebook.mjs",
+    "ingest:dry": "node scripts/ingest-musebook.mjs --dry-run --no-covers",
+    "share": "node scripts/share-tip.mjs",
+    "share:dry": "node scripts/share-tip.mjs --dry-run --no-cover"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.116.0",
+    "next": "14.2.35",
+    "react": "^18",
+    "react-dom": "^18"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.35",
+    "postcss": "^8",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5"
+  }
+}
