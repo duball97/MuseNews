@@ -65,7 +65,7 @@ export async function listMoreArticles(article: Article, limit = 8): Promise<{ n
   olderParams.set("limit", String(limit));
 
   const olderRes = await supabaseRest(`/musenews_articles?${olderParams}`);
-  let older: Article[] = olderRes.ok ? ((await olderRes.json()) as Article[]) : [];
+  const older: Article[] = olderRes.ok ? ((await olderRes.json()) as Article[]) : [];
 
   if (older.length < limit) {
     const fillParams = new URLSearchParams();
