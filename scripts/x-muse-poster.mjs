@@ -244,7 +244,7 @@ function pickFresh(list, recent, keyFn = (x) => x) {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-async function openRouterChat(messages, { temperature = 0.95, max_tokens = 220 } = {}) {
+async function openRouterChat(messages, { temperature = 0.95, max_tokens = 800 } = {}) {
   if (!OPENROUTER_KEY) throw new Error('OPENROUTER_API_KEY is required');
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -254,14 +254,30 @@ async function openRouterChat(messages, { temperature = 0.95, max_tokens = 220 }
       'HTTP-Referer': SITE,
       'X-Title': 'MuseNews X poster',
     },
-    body: JSON.stringify({ model: MODEL, temperature, max_tokens, messages }),
+    body: JSON.stringify({
+      model: MODEL,
+      temperature,
+      max_tokens,
+      // Reasoning models (gpt-5.x) burn max_tokens on thinking first — keep effort low for tweets.
+      reasoning: { effort: 'low' },
+      messages,
+    }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${JSON.stringify(json).slice(0, 400)}`);
-  const text = String(json?.choices?.[0]?.message?.content || '')
+  const choice = json?.choices?.[0] || {};
+  let text = String(choice?.message?.content || '')
     .trim()
     .replace(/^["']|["']$/g, '');
-  if (!text) throw new Error('OpenRouter returned empty text');
+  if (!text) {
+    const reasonTokens = json?.usage?.completion_tokens_details?.reasoning_tokens;
+    const finish = choice?.finish_reason || choice?.native_finish_reason || '?';
+    throw new Error(
+      `OpenRouter returned empty text (finish=${finish}` +
+        (reasonTokens != null ? `, reasoning_tokens=${reasonTokens}` : '') +
+        `, max_tokens=${max_tokens})`,
+    );
+  }
   return text;
 }
 
@@ -371,7 +387,7 @@ Rules:
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    { temperature: 0.8, max_tokens: 120 },
+    { temperature: 0.8, max_tokens: 800 },
   );
 
   if (!/musenews\.lol|\bhttps?:\/\//i.test(text)) {
@@ -445,7 +461,7 @@ Rules:
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    { temperature: 1.05, max_tokens: 100 },
+    { temperature: 1.05, max_tokens: 800 },
   );
 
   if (!wantLink) {
@@ -495,7 +511,7 @@ Rules:
         { role: 'system', content: system },
         { role: 'user', content: user },
       ],
-      { temperature: 1.0, max_tokens: 100 },
+      { temperature: 1.0, max_tokens: 800 },
     ),
     articleHint?.url,
     160,
