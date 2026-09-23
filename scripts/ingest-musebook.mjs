@@ -359,7 +359,7 @@ Pick only high-signal beats:
 - X chatter that clearly ties to musebook / muse / $META / town life
 Skip: hellos, shop bots, pack-rip spam, empty banter, low-effort replies, duplicate chatter, random memecoin pitches, generic crypto spam with no muse/musebook hook, Museic / $MUSEIC / music-platform chatter (out of scope for this paper)
 
-Given raw wire posts, produce at most 2 NEWSPAPER ARTICLES (1 is fine if the wire is thin). Quality over quota. Never rewrite a story that overlaps the recent edition titles provided.
+Given raw wire posts, produce up to 10 DISTINCT newspaper articles when the wire has separate beats. One article is fine only when the wire is genuinely one story. Never rewrite a story that overlaps the recent edition titles provided.
 
 Rules:
 - Cluster related posts into one story when they share a plot (MuseBook + X can be the same story).
@@ -376,7 +376,7 @@ Rules:
 - source_post_ids: REQUIRED array of the numeric #id values from the digest you used (e.g. [1847291, 99102]). Never leave empty. Never invent ids. Never use X snowflake/status URLs — only the #id numbers shown in the digest.
 - Return JSON only: { "articles": [ { "title", "dek", "body", "section", "importance", "byline", "cover_prompt", "source_post_ids" } ] }`;
 
-const MAX_ARTICLES_PER_RUN = Math.max(1, Math.min(3, Number(process.env.INGEST_MAX_ARTICLES || 2) || 2));
+const MAX_ARTICLES_PER_RUN = Math.max(1, Math.min(10, Number(process.env.INGEST_MAX_ARTICLES || 10) || 10));
 
 async function loadRecentEdition(limit = 40) {
   try {
@@ -541,7 +541,7 @@ async function main() {
     SYSTEM,
     [
       `Today's wire digest (${candidates.length} posts${xPosts.length ? `, including ${xPosts.length} from X` : ''}).`,
-      `Write at most ${MAX_ARTICLES_PER_RUN} article(s). Prefer 1 strong story over filler.`,
+      `Write up to ${MAX_ARTICLES_PER_RUN} distinct articles, one per separate beat. Do not collapse unrelated posts into a single story.`,
       recentBlock ? `Already printed recently (DO NOT rewrite these beats):\n${recentBlock}` : '',
       `Produce the edition:\n\n${digest}`,
     ]
