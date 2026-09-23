@@ -29,6 +29,9 @@ yarn-error.log*
 .env
 .env*.local
 
+# MuseBook muse identity (ed25519 private keys — never commit)
+.musebook/
+
 # floor reporter
 .voice-out/
 
