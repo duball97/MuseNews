@@ -19,9 +19,7 @@
  *   /beat townhall                         # pull one board, flash if new
  *   /quit
  *
- * X Space (Mac) — same duplex as Museic:
- *   Space mic = BlackHole 2ch
- *   idle output = Speakers; speak = Multi-Output
+ * X Space (Mac): listen on the Mac microphone, speak on the current output.
  *
  * Env:
  *   OPENROUTER_API_KEY
@@ -70,8 +68,6 @@ const OUT_DIR = (() => {
 })();
 const SHOULD_PLAY = !['0', 'false', 'no'].includes(String(process.env.VOICE_PLAY || '1').toLowerCase());
 const LISTEN_DEVICE = (process.env.VOICE_LISTEN_DEVICE || 'MacBook Pro Microphone').trim();
-const SPEAK_DEVICE = (process.env.VOICE_SPEAK_DEVICE || 'Multi-Output Device').trim();
-const IDLE_DEVICE = (process.env.VOICE_IDLE_DEVICE || 'MacBook Pro Speakers').trim();
 const SILENCE_MS = Number(process.env.VOICE_SILENCE_MS || 900);
 const MAX_LISTEN_MS = Number(process.env.VOICE_MAX_LISTEN_MS || 16_000);
 const SPEECH_RMS = Number(process.env.VOICE_SPEECH_RMS || 280);
@@ -272,26 +268,6 @@ function hasBin(name) {
   }
 }
 
-function switchOutput(device) {
-  if (!hasBin('SwitchAudioSource')) return false;
-  try {
-    execFileSync('SwitchAudioSource', ['-s', device], { stdio: 'ignore' });
-    return true;
-  } catch {
-    console.warn(`Could not switch output to "${device}"`);
-    return false;
-  }
-}
-
-function currentOutput() {
-  if (!hasBin('SwitchAudioSource')) return '';
-  try {
-    return execFileSync('SwitchAudioSource', ['-c'], { encoding: 'utf8' }).trim();
-  } catch {
-    return '';
-  }
-}
-
 function pcm16ToWav(pcm, sampleRate = 24_000, channels = 1) {
   const bitsPerSample = 16;
   const blockAlign = (channels * bitsPerSample) / 8;
@@ -340,22 +316,15 @@ function boostPcm16(pcm, gain = INPUT_GAIN) {
 
 async function playAudio(filePath) {
   if (NO_PLAY || !SHOULD_PLAY) return;
-  const prev = currentOutput();
-  switchOutput(SPEAK_DEVICE);
-  try {
-    await new Promise((resolvePromise, reject) => {
-      const child = spawn('afplay', ['-v', '1', filePath], { stdio: 'ignore' });
-      child.on('error', reject);
-      child.on('exit', (code) => (code === 0 ? resolvePromise() : reject(new Error(`afplay exit ${code}`))));
-    });
-  } finally {
-    switchOutput(prev || IDLE_DEVICE);
-  }
+  await new Promise((resolvePromise, reject) => {
+    const child = spawn('afplay', ['-v', '1', filePath], { stdio: 'ignore' });
+    child.on('error', reject);
+    child.on('exit', (code) => (code === 0 ? resolvePromise() : reject(new Error(`afplay exit ${code}`))));
+  });
 }
 
 function startPcmStreamPlayer(sampleRate = 24_000) {
   if (NO_PLAY || !SHOULD_PLAY || !STREAM_PLAY || !hasBin('ffplay')) return null;
-  switchOutput(SPEAK_DEVICE);
   const child = spawn(
     'ffplay',
     ['-nodisp', '-autoexit', '-loglevel', 'quiet', '-f', 's16le', '-ar', String(sampleRate), '-ac', '1', '-i', 'pipe:0'],
@@ -1062,12 +1031,9 @@ function createTypedLineQueue() {
 async function liveLoop() {
   if (!hasBin('ffmpeg')) throw new Error('ffmpeg required for live listen (brew install ffmpeg)');
 
-  switchOutput(IDLE_DEVICE);
-
   const { index, name, devices } = resolveListenIndex(LISTEN_DEVICE);
   console.log(`MuseNews reporter LIVE (${MODEL}, ${VOICE})`);
   console.log(`listen: [${index}] ${name}`);
-  console.log(`speak → ${SPEAK_DEVICE}, idle → ${IDLE_DEVICE}`);
   console.log(`feed: ${NEWS_FEED}`);
   console.log(`devices: ${devices.map((d) => `[${d.index}] ${d.name}`).join(', ')}`);
   console.log('Type a line anytime. Commands: /flash   /wire   /beat <board>   /quit');
@@ -1264,7 +1230,7 @@ LIVE terminal:
 
 Reporter covers civic MuseBook news — no $WREN / $MUSEIC / foreign tickers.
 Each story is filed once this Space. Quiet room + a hot new beat → auto flash.
-Routing: Space mic = BlackHole; idle = Speakers; speak = Multi-Output.
+Listens on the Mac microphone. Speaks on the current output.
 `);
 }
 
