@@ -143,12 +143,22 @@ a:hover {
   animation: ruleExpand 0.8s 0.25s ease-out both;
 }
 
+.masthead-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  margin: 0.55rem auto 0.15rem;
+  animation: fadeUp 0.7s 0.28s ease-out both;
+}
+
 .social-x {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  margin: 0.55rem auto 0.15rem;
+  margin: 0;
   padding: 0.28rem 0.65rem;
   text-decoration: none;
   color: var(--ink);
@@ -157,7 +167,49 @@ a:hover {
   font-size: 0.72rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  animation: fadeUp 0.7s 0.28s ease-out both;
+}
+
+.ca-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0.28rem 0.65rem;
+  border: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font-family: var(--smallcaps);
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.ca-chip:hover {
+  border-color: var(--ink);
+  background: rgba(18, 16, 12, 0.04);
+}
+
+.ca-chip-label {
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.ca-chip-addr {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--ink-soft);
+}
+
+.ca-chip-status {
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+
+.ca-chip.foot {
+  animation: none;
 }
 
 .social-x svg {

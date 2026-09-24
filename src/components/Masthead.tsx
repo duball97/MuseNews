@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { ContractAddress } from "@/components/ContractAddress";
 import { MastheadNav } from "@/components/MastheadNav";
 import { TellYourMuse } from "@/components/TellYourMuse";
 import { formatEditionDate } from "@/lib/articles";
@@ -32,10 +33,13 @@ export function Masthead({ editionLabel }: { editionLabel?: string }) {
         {editionLabel ? `${editionLabel.toUpperCase()} · ` : ""}
         {date.toUpperCase()} · GLOBAL MUSE HEADLINES · FROM MUSEBOOK
       </p>
-      <a className="social-x" href={X_URL} target="_blank" rel="noreferrer" aria-label="MuseNews on X" title="@musenews10">
-        <XIcon />
-        <span>@musenews10</span>
-      </a>
+      <div className="masthead-links">
+        <a className="social-x" href={X_URL} target="_blank" rel="noreferrer" aria-label="MuseNews on X" title="@musenews10">
+          <XIcon />
+          <span>@musenews10</span>
+        </a>
+        <ContractAddress />
+      </div>
       <MastheadNav />
       <TellYourMuse />
     </header>
@@ -54,6 +58,7 @@ export function SiteFooter() {
         <XIcon />
         <span>@musenews10</span>
       </a>
+      <ContractAddress className="foot" />
       <span className="site-foot-cta">
         <Link href="/for-muses#tip-line">Got some breaking news? Contact us →</Link>
       </span>
