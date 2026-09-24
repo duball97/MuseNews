@@ -66,7 +66,7 @@ const TEXT_MODEL = process.env.OPENROUTER_TEXT_MODEL || 'openai/gpt-5.6-luna';
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || 'https://musenews.lol').replace(/\/$/, '');
-const BASE = (process.env.MUSEBOOK_BASE || 'https://musebook.lol').replace(/\/$/, '');
+const BASE = (process.env.MUSEBOOK_BASE || 'https://musebook.me').replace(/\/$/, '');
 
 function slugify(title) {
   return (
@@ -79,11 +79,38 @@ function slugify(title) {
 }
 
 function cleanTitle(t) {
-  return String(t || '')
+  return uncapsHeadline(t);
+}
+
+/** Turn shouting ALL-CAPS headlines into Title Case. */
+function uncapsHeadline(raw) {
+  let s = String(raw || '')
     .replace(/\*\*/g, '')
     .replace(/^\*+|\*+$/g, '')
-    .trim()
-    .slice(0, 160);
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s) return '';
+  const letters = s.replace(/[^A-Za-z]/g, '');
+  const upper = (letters.match(/[A-Z]/g) || []).length;
+  const shouting = letters.length >= 4 && upper / letters.length >= 0.72;
+  if (!shouting) return s.slice(0, 160);
+
+  const small = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'for', 'of', 'in', 'on', 'to', 'with', 'at', 'by', 'from', 'as', 'into', 'via', 'vs']);
+  const keepUpper = new Set(['meta', 'muse', 'musebook', 'musenews', 'ai', 'solana', 'x']);
+  const words = s.toLowerCase().split(' ');
+  const out = words.map((w, i) => {
+    if (/^\$[a-z0-9_]+$/i.test(w)) return w.toUpperCase();
+    const m = w.match(/^([^a-z0-9$]*)([a-z0-9$]+)([^a-z0-9]*)$/i);
+    if (!m) return w;
+    const [, pre, core, post] = m;
+    if (keepUpper.has(core)) {
+      const branded = core === 'musebook' ? 'MuseBook' : core === 'musenews' ? 'MuseNews' : core.toUpperCase();
+      return `${pre}${branded}${post}`;
+    }
+    if (i > 0 && small.has(core)) return `${pre}${core}${post}`;
+    return `${pre}${core.charAt(0).toUpperCase()}${core.slice(1)}${post}`;
+  });
+  return out.join(' ').slice(0, 160);
 }
 
 async function supabase(path, init = {}) {
@@ -224,7 +251,7 @@ async function uploadCover(slug, bytes, contentType) {
 const TIP_SYSTEM = `You are MuseNews city desk. Turn a human tip into ONE newspaper article.
 Return JSON: { "title", "dek", "body", "section", "importance", "byline", "cover_prompt" }
 - section: news | opinion | breaking
-- title: MAXIMUM wow / tabloid bait — punchy, stakesy, curiosity gap, ALL-CAPS friendly, still true to the tip. No markdown.
+- title: MAXIMUM wow / tabloid bait — punchy, stakesy, curiosity gap. Title Case or sentence case — NEVER ALL CAPS. Still true to the tip. No markdown.
 - body: LONG broadsheet copy — 7–12 short paragraphs (about 450–900 words) separated by \\n\\n. Lede, named voices, how it unfolded, stakes, what happens next. Grounded in the tip (and any source posts). Do not invent facts. Never stop at three thin grafs.
 - dek: one-line hook that doubles down
 - cover_prompt: muse-character illustration brief, no text in image

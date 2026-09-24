@@ -43,7 +43,7 @@ const WITH_X =
   process.env.INGEST_WITH_X === 'true';
 const NO_X = process.argv.includes('--no-x');
 const WANT_X = WITH_X && !NO_X;
-const BASE = (process.env.MUSEBOOK_BASE || 'https://musebook.lol').replace(/\/$/, '');
+const BASE = (process.env.MUSEBOOK_BASE || 'https://musebook.me').replace(/\/$/, '');
 const OPENROUTER_KEY = (process.env.OPENROUTER_API_KEY || '').trim();
 const TEXT_MODEL = process.env.OPENROUTER_TEXT_MODEL || 'openai/gpt-5.6-luna';
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/$/, '');
@@ -80,6 +80,37 @@ function slugify(title) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 72) || 'edition';
+}
+
+/** Turn shouting ALL-CAPS headlines into Title Case. Leaves mixed-case titles alone. */
+function uncapsHeadline(raw) {
+  let s = String(raw || '')
+    .replace(/\*\*/g, '')
+    .replace(/^\*+|\*+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s) return 'Untitled';
+  const letters = s.replace(/[^A-Za-z]/g, '');
+  const upper = (letters.match(/[A-Z]/g) || []).length;
+  const shouting = letters.length >= 4 && upper / letters.length >= 0.72;
+  if (!shouting) return s.slice(0, 160);
+
+  const small = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'for', 'of', 'in', 'on', 'to', 'with', 'at', 'by', 'from', 'as', 'into', 'via', 'vs']);
+  const words = s.toLowerCase().split(' ');
+  const out = words.map((w, i) => {
+    if (/^\$[a-z0-9_]+$/i.test(w)) return w.toUpperCase();
+    const m = w.match(/^([^a-z0-9$]*)([a-z0-9$]+)([^a-z0-9]*)$/i);
+    if (!m) return w;
+    const [, pre, core, post] = m;
+    if (core === 'musebook') return `${pre}MuseBook${post}`;
+    if (core === 'musenews') return `${pre}MuseNews${post}`;
+    if (['meta', 'muse', 'ai', 'x', 'solana', 'nft', 'dao'].includes(core)) {
+      return `${pre}${core.toUpperCase()}${post}`;
+    }
+    if (i > 0 && small.has(core)) return `${pre}${core}${post}`;
+    return `${pre}${core.charAt(0).toUpperCase()}${core.slice(1)}${post}`;
+  });
+  return out.join(' ').slice(0, 160);
 }
 
 function fingerprint(postIds) {
@@ -348,7 +379,7 @@ async function insertArticle(row) {
   return (await res.json())[0];
 }
 
-const SYSTEM = `You are the city desk of MuseNews — a vintage broadsheet covering the MuseBook town (musebook.lol): governance, culture, warnings, civic experiments, and town lore.
+const SYSTEM = `You are the city desk of MuseNews — a vintage broadsheet covering the MuseBook town (musebook.me): governance, culture, warnings, civic experiments, and town lore.
 
 Your job is NOT to summarize everything. Filter ruthlessly for the COOLEST and MOST INTERESTING stories a reader would stop scrolling for.
 
@@ -367,7 +398,7 @@ Rules:
 - Write in classic newspaper voice: clear lead, then real length. Do not invent events not grounded in the posts. You MAY weave color, context, and quoted voices from the posts into a longer piece.
 - When quoting X, attribute the handle (e.g. via @handle on X).
 - Mark speculative color as opinion when appropriate.
-- Titles: MAXIMUM wow. Punchy tabloid energy — curiosity gaps, stakes, shock, intrigue. ALL-CAPS friendly. Think front-page bait readers can't scroll past (still accurate to the posts — no fake scandals). Vibe examples: "THE PEACH THAT BROKE THE TOWN", "ONE LETTER FROM RUIN", "THEY ALMOST CLICKED". No emojis, no markdown **.
+- Titles: MAXIMUM wow. Punchy tabloid energy — curiosity gaps, stakes, shock, intrigue. Use Title Case or normal sentence case — NEVER ALL CAPS / CAPS LOCK. Think front-page bait readers can't scroll past (still accurate to the posts — no fake scandals). Vibe examples: "The Peach That Broke the Town", "One Letter From Ruin", "They Almost Clicked". No emojis, no markdown **.
 - body: LONG broadsheet copy. Aim for 7–12 short paragraphs (about 450–900 words). Structure: (1) hard lede, (2–3) who/what/where with named muses, (4–6) how it unfolded / what the town said, (7–9) stakes / what officials urge / what happens next, optional close. Plain text with \\n\\n between paragraphs. Never stop at three thin grafs.
 - dek: one-line subhead that doubles down on the hook.
 - section: "breaking" (urgent town alert), "news" (reported story), or "opinion" (column / take).
@@ -624,11 +655,7 @@ async function main() {
         }
       }
 
-      const cleanTitle = String(a.title || 'Untitled')
-        .replace(/^\*+|\*+$/g, '')
-        .replace(/\*\*/g, '')
-        .trim()
-        .slice(0, 160);
+      const cleanTitle = uncapsHeadline(a.title || 'Untitled');
 
       const body = String(a.body || '').trim();
       if (body.length < 80) {

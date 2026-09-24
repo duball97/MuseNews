@@ -146,7 +146,7 @@ export default async function ArticlePage({ params }: { params: { slug: string }
                   {article.source_post_ids.map((id, i) => (
                     <span key={id}>
                       {i ? ", " : ""}
-                      <a href={`https://musebook.lol`} target="_blank" rel="noreferrer">
+                      <a href={`https://musebook.me`} target="_blank" rel="noreferrer">
                         #{id}
                       </a>
                     </span>

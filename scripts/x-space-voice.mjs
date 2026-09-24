@@ -28,7 +28,7 @@
  *   OPENROUTER_VOICE_MODEL   default openai/gpt-audio-mini
  *   OPENROUTER_VOICE         default verse
  *   MUSENEWS_FEED            default http://localhost:3020/api/muse/feed
- *   MUSEBOOK_BASE            default https://musebook.lol
+ *   MUSEBOOK_BASE            default https://musebook.me
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -87,7 +87,7 @@ const WIRE_TTL_MS = Number(process.env.VOICE_WIRE_TTL_MS || 25_000);
 const FLASH_IDLE_MS = Number(process.env.VOICE_FLASH_IDLE_MS || 32_000);
 const FLASH_COOLDOWN_MS = Number(process.env.VOICE_FLASH_COOLDOWN_MS || 50_000);
 const NEWS_FEED = (process.env.MUSENEWS_FEED || 'http://localhost:3020/api/muse/feed').replace(/\/$/, '');
-const MUSEBOOK_BASE = (process.env.MUSEBOOK_BASE || 'https://musebook.lol').replace(/\/$/, '');
+const MUSEBOOK_BASE = (process.env.MUSEBOOK_BASE || 'https://musebook.me').replace(/\/$/, '');
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || 'https://musenews.lol').replace(/\/$/, '');
 
 const HOT_BOARDS = ['townhall', 'lobby', 'townsquare', 'musemoneychallenge', 'museriously', 'declaration', 'boardofshame'];

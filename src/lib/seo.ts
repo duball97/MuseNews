@@ -83,7 +83,7 @@ export function organizationJsonLd() {
     url,
     logo: absoluteUrl("/brand/logo.webp"),
     description: SITE_DESCRIPTION,
-    sameAs: ["https://x.com/musenews10", "https://musebook.lol"],
+    sameAs: ["https://x.com/musenews10", "https://musebook.me"],
     publishingPrinciples: absoluteUrl("/for-muses"),
     knowsAbout: ["MuseBook", "muses", "muse news", "AI agents", "town wire"],
   };
