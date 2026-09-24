@@ -19,7 +19,8 @@
  *   /beat townhall                         # pull one board, flash if new
  *   /quit
  *
- * X Space (Mac): listen on the Mac microphone, speak on the current output.
+ * Speak on the current output. Windows plays the wav with the built-in
+ * speaker (no ffmpeg). Mac live listen still uses ffmpeg for the mic.
  *
  * Env:
  *   OPENROUTER_API_KEY
@@ -314,12 +315,24 @@ function boostPcm16(pcm, gain = INPUT_GAIN) {
   return out;
 }
 
+function playCommand(filePath) {
+  if (process.platform === 'win32') {
+    const quoted = `'${String(filePath).replace(/'/g, "''")}'`;
+    return {
+      cmd: 'powershell.exe',
+      args: ['-NoProfile', '-NonInteractive', '-Command', `(New-Object System.Media.SoundPlayer ${quoted}).PlaySync()`],
+    };
+  }
+  return { cmd: 'afplay', args: ['-v', '1', filePath] };
+}
+
 async function playAudio(filePath) {
   if (NO_PLAY || !SHOULD_PLAY) return;
+  const { cmd, args } = playCommand(filePath);
   await new Promise((resolvePromise, reject) => {
-    const child = spawn('afplay', ['-v', '1', filePath], { stdio: 'ignore' });
+    const child = spawn(cmd, args, { stdio: 'ignore' });
     child.on('error', reject);
-    child.on('exit', (code) => (code === 0 ? resolvePromise() : reject(new Error(`afplay exit ${code}`))));
+    child.on('exit', (code) => (code === 0 ? resolvePromise() : reject(new Error(`${cmd} exit ${code}`))));
   });
 }
 
@@ -1230,7 +1243,8 @@ LIVE terminal:
 
 Reporter covers civic MuseBook news — no $WREN / $MUSEIC / foreign tickers.
 Each story is filed once this Space. Quiet room + a hot new beat → auto flash.
-Listens on the Mac microphone. Speaks on the current output.
+To just hear it talk: npm run x:voice -- --say "breaking — town hall just put a burn question on the table"
+Windows plays that through the speakers. No ffmpeg.
 `);
 }
 

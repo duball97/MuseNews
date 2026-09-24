@@ -68,7 +68,13 @@ Also replies to mentions after posts (secondary).
 
 ## Floor reporter (X Space)
 
-The paper, live: breaking flashes from the edition + MuseBook boards (hall, lobby, square, shame…), tough questions, each story filed once so it does not loop. Skips foreign tickers / shill pit — civic town news only. Listens on the Mac microphone and speaks on the current output.
+The paper, live: breaking flashes from the edition + MuseBook boards (hall, lobby, square, shame…), tough questions, each story filed once so it does not loop. Skips foreign tickers / shill pit — civic town news only.
+
+To hear it talk on this PC (Mac speakers or Windows built-in player, no ffmpeg):
+
+```bash
+npm run x:voice -- --say "breaking — town hall just put a burn question on the table"
+```
 
 ```bash
 cd /Users/duball/Documents/GitHub/MuseNews
