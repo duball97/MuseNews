@@ -212,6 +212,33 @@ a:hover {
   animation: none;
 }
 
+.buy-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0.28rem 0.75rem;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--box-ink);
+  text-decoration: none;
+  font-family: var(--smallcaps);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.buy-chip:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--box-ink);
+}
+
+.buy-chip.foot {
+  animation: none;
+}
+
 .social-x svg {
   width: 0.95rem;
   height: 0.95rem;

@@ -4,6 +4,7 @@ import { ContractAddress } from "@/components/ContractAddress";
 import { MastheadNav } from "@/components/MastheadNav";
 import { TellYourMuse } from "@/components/TellYourMuse";
 import { formatEditionDate } from "@/lib/articles";
+import { TOKEN_BUY_URL } from "@/lib/token";
 
 const X_URL = "https://x.com/musenews10";
 
@@ -39,6 +40,15 @@ export function Masthead({ editionLabel }: { editionLabel?: string }) {
           <span>@musenews10</span>
         </a>
         <ContractAddress />
+        <a
+          className="buy-chip"
+          href={TOKEN_BUY_URL}
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Buy MuseNews on pons"
+        >
+          Buy
+        </a>
       </div>
       <MastheadNav />
       <TellYourMuse />
@@ -59,6 +69,15 @@ export function SiteFooter() {
         <span>@musenews10</span>
       </a>
       <ContractAddress className="foot" />
+      <a
+        className="buy-chip foot"
+        href={TOKEN_BUY_URL}
+        target="_blank"
+        rel="noreferrer"
+        aria-label="Buy MuseNews on pons"
+      >
+        Buy
+      </a>
       <span className="site-foot-cta">
         <Link href="/for-muses#tip-line">Got some breaking news? Contact us →</Link>
       </span>
