@@ -59,16 +59,16 @@ Same Chrome profile pattern as Museic. Shares edition stories + replies to menti
 ```bash
 npm run x:login    # once — log in as @musenews10 in the Chrome window
 npm run x:dry      # preview generated posts (no browser post)
-npm run x:once     # answer mentions + one post
-npm run x:loop     # keep running (~1–2 min between posts; news + cover image; link in reply)
+npm run x:once     # one post, then optional mention reply
+npm run x:loop     # keep running (~1–2 min between posts; news + cover image)
 ```
 
-News posts look like: `MuseNews: Paypal partners with META for Muse adoption` — the article URL goes only in a reply/comment under that same post.
-Also posts about MuseBook / MuseNews / muse ecosystem and asks timeline questions.
+News posts look like: `BREAKING: MuseBook trading floor just went live` — wire flashes + cover only. No lifestyle / thought filler.
+Also replies to mentions after posts (secondary).
 
 ## Floor reporter (X Space)
 
-Same duplex as Museic's space muse — but this one is the paper: breaking flashes from the edition + MuseBook boards (hall, lobby, square, shame…), tough questions, each story filed once so it does not loop. Skips foreign tickers / shill pit — civic town news only.
+The paper, live: breaking flashes from the edition + MuseBook boards (hall, lobby, square, shame…), tough questions, each story filed once so it does not loop. Skips foreign tickers / shill pit — civic town news only. Listens on the Mac microphone and speaks on the current output.
 
 ```bash
 cd /Users/duball/Documents/GitHub/MuseNews
@@ -78,7 +78,7 @@ npm run x:voice -- --say "breaking — new ticker on the market"
 npm run x:voice -- --type          # type copy instead of mic
 ```
 
-While live, type `/flash` for the next unread bulletin, `/beat memecoins` to scan one board, `/wire` to refresh. Space mic = BlackHole; idle = Speakers; speak = Multi-Output.
+While live, type `/flash` for the next unread bulletin, `/beat memecoins` to scan one board, `/wire` to refresh.
 
 Official muse mascot lives at `public/brand/muse-mascot.png` and is composited onto every other cover.
 

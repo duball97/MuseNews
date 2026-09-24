@@ -6,9 +6,9 @@
  * Same Chrome session as x-search-wire (npm run x:login once).
  *
  *   npm run x:login
- *   npm run x:once          # reply mentions + one post
+ *   npm run x:once          # one post, then optional mention reply
  *   npm run x:dry           # generate text only
- *   npm run x:loop          # every ~1–2 min, mention checks in between
+ *   npm run x:loop          # every ~1–2 min; mentions only between / after posts
  *
  * Env:
  *   OPENROUTER_API_KEY
@@ -18,10 +18,10 @@
  *   X_PROFILE_DIR           default ~/.musenews-chrome-x-profile
  *   X_INTERVAL_MIN_MS / X_INTERVAL_MAX_MS
  *   X_REPLY_POLL_MIN_MS / X_REPLY_POLL_MAX_MS
- *   X_MAX_REPLIES           default 4
- *   X_NEWS_SHARE_BIAS       0–1, default 0.98 when unshared today's stories remain
+ *   X_MAX_REPLIES           default 1 (mentions are secondary to posting)
+ *   X_NEWS_SHARE_BIAS       unused (poster is news-only); kept for env compat
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -69,8 +69,7 @@ const INTERVAL_MIN_MS = Math.max(60_000, Number(process.env.X_INTERVAL_MIN_MS ||
 const INTERVAL_MAX_MS = Math.max(INTERVAL_MIN_MS, Number(process.env.X_INTERVAL_MAX_MS || 2 * 60 * 1000) || 2 * 60 * 1000);
 const REPLY_POLL_MIN_MS = Math.max(45_000, Number(process.env.X_REPLY_POLL_MIN_MS || 90 * 1000) || 90 * 1000);
 const REPLY_POLL_MAX_MS = Math.max(REPLY_POLL_MIN_MS, Number(process.env.X_REPLY_POLL_MAX_MS || 2 * 60 * 1000) || 2 * 60 * 1000);
-const MAX_REPLIES = Math.max(1, Number(process.env.X_MAX_REPLIES || 4) || 4);
-const NEWS_SHARE_BIAS = Math.min(1, Math.max(0, Number(process.env.X_NEWS_SHARE_BIAS || 0.98) || 0.98));
+const MAX_REPLIES = Math.max(1, Number(process.env.X_MAX_REPLIES || 1) || 1);
 const FEED_LIMIT = Math.max(10, Math.min(50, Number(process.env.X_FEED_LIMIT || 50) || 50));
 /** Prefer stories published within this window (ms). Default: calendar day ~36h so "today" survives timezone skew. */
 const FRESH_MS = Math.max(60 * 60 * 1000, Number(process.env.X_FRESH_MS || 36 * 60 * 60 * 1000) || 36 * 60 * 60 * 1000);
@@ -85,65 +84,25 @@ const FIXED_TEXT_IDX = process.argv.indexOf('--text');
 const FIXED_TEXT = FIXED_TEXT_IDX >= 0 ? process.argv[FIXED_TEXT_IDX + 1] : '';
 
 const NEWS_ANGLES = [
-  'curiosity gap: tease the wildest detail, withhold the punchline',
-  'shock open: "wait." / "this is messy." then the hook',
-  'stakes bait: make it sound like the town is one click from chaos',
-  'receipt energy: imply receipts without dumping them',
-  'main-character framing: one muse / one move that changes everything',
-  'controversy lite: two sides colliding, reader has to know who won',
-  'FOMO flash: everyone in the lobby is already talking about this',
-  'plot twist tease: the story is not what it looks like',
-  'tabloid bait: short, sticky, screenshot-worthy',
-  'unfinished sentence energy: leave them mid-thought',
-];
-
-const PROJECT_ANGLES = [
-  'FOMO: the muse town paper is printing what X is already whispering',
-  'flex lightly: MuseNews turns MuseBook chaos into stories people finish',
-  'invite: the desk is live, the lobby is loud',
-  'curiosity: agents + humans reading the same front page',
-  'status: if it matters in musebook.me, it hits musenews.lol',
-  'hot take setup: the outer wire is gossip, the paper is the cut',
-];
-
-const QUESTION_ANGLES = [
-  'ask a polarizing town question people will argue under',
-  'ask: which rumor would you print first?',
-  'ask: scam warning or governance fight, what should lead?',
-  'ask: would you trust a muse tip with your wallet?',
-  'ask: lobby gossip or townhall votes, which moves $META more?',
-  'ask something spicy enough that people reply with takes',
-  'ask: one story from today you refuse to believe',
-];
-
-const THOUGHT_ANGLES = [
-  'hot take on muse town drama, sharp and shareable',
-  'one sticky observation that makes people screenshot',
-  'contrast: chatter vs what actually holds up',
-  'late-night desk energy: the town never sleeps',
-  'tiny prophecy about what breaks next in muse world',
+  'BREAKING flash: lead with the hit, no soft open',
+  'wire bulletin: who / what / why it matters in one breath',
+  'just-in energy: this just landed on the desk',
+  'receipt drop: the fact that changes the story',
+  'town alarm: something moved, name it',
+  'market/civic jolt: money, votes, or reputation just shifted',
+  'scoop tone: we caught it before the lobby finished arguing',
+  'escalation: the rumor just became a story',
+  'hard lead: subject + verb + stakes, nothing cute',
+  'follow-up flash: the next beat on a story already moving',
 ];
 
 const TONE_SHIFTS = [
-  'viral timeline bait',
-  'tabloid chaos, still accurate',
-  'dry then sudden sting',
-  'urgent lobby whisper',
-  'smug insider who saw it first',
-  'shocked but not surprised',
+  'breaking wire',
+  'urgent but precise',
+  'cold factual sting',
+  'desk just got the tip',
+  'no fluff, all signal',
   'ruthlessly punchy',
-];
-
-const FORMATS = [
-  'hook in 8 words or less, then a sting',
-  'one sticky line people will quote',
-  'two short lines, second line is the twist',
-  'open with a reaction word, then the bait',
-];
-
-const QUESTION_FORMATS = [
-  'one spicy question that demands a reply',
-  'tiny claim + sharper question',
 ];
 
 function sleep(ms) {
@@ -185,9 +144,20 @@ async function pageAlive(page, ms = 8_000) {
 
 function isDetachedError(error) {
   const msg = String(error?.message || error || '');
-  return /detached Frame|Session closed|Target closed|Execution context was destroyed|Cannot find context|page is closed|Protocol error/i.test(
+  return /detached Frame|Session closed|Target closed|Execution context was destroyed|Cannot find context|page is closed|Protocol error|Connection closed|Browser closed|WebSocket is not open|Navigating frame was detached|browser has been closed|Browser\.close/i.test(
     msg,
   );
+}
+
+function isBrowserConnected(browser) {
+  try {
+    if (!browser) return false;
+    if (typeof browser.isConnected === 'function') return browser.isConnected();
+    if (typeof browser.connected === 'boolean') return browser.connected;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function safeGoto(page, url, { timeout = 90_000 } = {}) {
@@ -203,9 +173,39 @@ async function safeGoto(page, url, { timeout = 90_000 } = {}) {
   }
 }
 
-/** Close dead tabs and return a usable page on the same Chrome profile. */
+async function closeBrowserQuietly(browser) {
+  if (!browser) return;
+  try {
+    await Promise.race([browser.close().catch(() => {}), sleep(4_000)]);
+  } catch {
+    /* ignore */
+  }
+  try {
+    const proc = typeof browser.process === 'function' ? browser.process() : null;
+    if (proc && !proc.killed) proc.kill('SIGKILL');
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Chrome leaves these after a hard crash and blocks the next launch on the same profile. */
+function clearChromeLocks(profileDir) {
+  for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+    const path = join(profileDir, name);
+    try {
+      if (existsSync(path)) unlinkSync(path);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** Close dead tabs and return a usable page on the same Chrome connection. */
 async function recoverPage(browser, oldPage = null) {
   console.warn('[x] recovering browser tab after detach/crash…');
+  if (!isBrowserConnected(browser)) {
+    throw new Error('Connection closed');
+  }
   if (oldPage) {
     try {
       if (typeof oldPage.isClosed !== 'function' || !oldPage.isClosed()) {
@@ -247,12 +247,57 @@ async function recoverPage(browser, oldPage = null) {
   return page;
 }
 
-async function ensureLivePage(browser, page) {
+/** Tab recovery first; if Chrome itself is dead, kill + relaunch the whole browser. */
+async function recoverSession(session, { reason = 'crash' } = {}) {
+  const connected = isBrowserConnected(session.browser);
+  if (connected) {
+    try {
+      session.page = await recoverPage(session.browser, session.page);
+      return session;
+    } catch (error) {
+      console.warn('[x] tab recover failed, relaunching Chrome:', error instanceof Error ? error.message : error);
+    }
+  } else {
+    console.warn(`[x] Chrome connection dead (${reason}) — relaunching browser…`);
+  }
+
+  await closeBrowserQuietly(session.browser);
+  session.browser = null;
+  session.page = null;
+  clearChromeLocks(PROFILE_DIR);
+  await sleep(1500);
+
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const launched = await launchXBrowser({ headless: false });
+      session.browser = launched.browser;
+      session.page = launched.page;
+      await ensureLoggedIn(session.page, { waitForever: false });
+      console.log(`[x] browser relaunched (attempt ${attempt}) — session OK`);
+      return session;
+    } catch (error) {
+      lastErr = error;
+      console.error(`[x] relaunch attempt ${attempt}/3 failed:`, error instanceof Error ? error.message : error);
+      await closeBrowserQuietly(session.browser);
+      session.browser = null;
+      session.page = null;
+      clearChromeLocks(PROFILE_DIR);
+      await sleep(2000 * attempt);
+    }
+  }
+  throw lastErr || new Error('browser relaunch failed');
+}
+
+async function ensureLiveSession(session) {
   try {
-    await pageAlive(page, 5_000);
-    return page;
-  } catch {
-    return recoverPage(browser, page);
+    if (!isBrowserConnected(session.browser)) {
+      throw new Error('Connection closed');
+    }
+    await pageAlive(session.page, 5_000);
+    return session;
+  } catch (error) {
+    return recoverSession(session, { reason: error instanceof Error ? error.message : 'page dead' });
   }
 }
 
@@ -390,39 +435,39 @@ function unsharedArticles(articles) {
 }
 
 function pickArticleToShare(articles) {
-  const freshUnshared = unsharedArticles(articles).filter((a) => isFreshToday(a));
-  const anyUnshared = unsharedArticles(articles);
-  let pool = freshUnshared.length ? freshUnshared : anyUnshared.length ? anyUnshared : articles;
+  if (!articles?.length) return null;
+
+  const shared = new Set(loadPostState().sharedUrls || []);
+  const isUnshared = (a) => a?.url && !shared.has(a.url);
+  const hasCover = (a) => Boolean(a?.cover_url);
+
+  // Hard rule: if ANY story has a cover, never post a coverless one.
+  // Newest muse-desk pieces often ship without covers — prefer illustrated leads.
+  const covered = articles.filter(hasCover);
+  const poolBase = covered.length ? covered : articles;
+
+  const buckets = [
+    poolBase.filter((a) => isUnshared(a) && isFreshToday(a)),
+    poolBase.filter((a) => isUnshared(a)),
+    poolBase.filter((a) => isFreshToday(a)),
+    poolBase,
+  ];
+  let pool = buckets.find((b) => b.length) || poolBase;
   if (!pool.length) return null;
 
-  // Prefer stories that still have a cover image for the timeline post
-  const withCover = pool.filter((a) => a?.cover_url);
-  if (withCover.length) pool = withCover;
-
-  // Newest first, then breaking over news over opinion
   const ranked = [...pool].sort((a, b) => {
+    // Prefer unshared, then newest, then breaking > news
+    const u = Number(isUnshared(b)) - Number(isUnshared(a));
+    if (u) return u;
     const byTime = publishedMs(b) - publishedMs(a);
     if (byTime) return byTime;
     const rank = (x) => (x.section === 'breaking' ? 3 : x.section === 'news' ? 2 : 1);
     return rank(b) - rank(a);
   });
-  return ranked[0];
-}
 
-/** Prefer news when today's edition still has unshared stories. */
-function pickPostMode(articles = []) {
-  const todayLeft = unsharedArticles(articles).filter((a) => isFreshToday(a));
-  if (todayLeft.length) {
-    if (Math.random() < NEWS_SHARE_BIAS) return 'news';
-  } else if (unsharedArticles(articles).length) {
-    if (Math.random() < 0.75) return 'news';
-  }
-  const roll = Math.random();
-  // Fallback mix when the queue is caught up
-  if (roll < 0.45) return 'news';
-  if (roll < 0.65) return 'project';
-  if (roll < 0.85) return 'question';
-  return 'thought';
+  const topN = Math.min(isUnshared(ranked[0]) ? 3 : 6, ranked.length);
+  const top = ranked.slice(0, topN);
+  return top[Math.floor(Math.random() * top.length)];
 }
 
 function cleanCopy(text) {
@@ -489,33 +534,40 @@ async function generateNewsPost(article) {
   const title = uncapsHeadline(String(article.title || '').replace(/\s+/g, ' ').trim());
   const dek = String(article.dek || '').replace(/\s+/g, ' ').trim();
   const url = article.url;
+  const section = String(article.section || 'news').toLowerCase();
+  const isBreaking = section === 'breaking' || chance(0.55);
+  const recentLines = (postState.recentPosts || [])
+    .slice(-8)
+    .map((p) => `- ${String(p).slice(0, 120)}`)
+    .join('\n');
 
-  const system = `You are ${MUSE_NAME} (${HANDLE}), the X voice of MuseNews (musenews.lol).
-You write CLICKBAIT that still tells the truth. Viral timeline energy. Not a corporate press account.
+  const system = `You are ${MUSE_NAME} (${HANDLE}), the breaking-news wire for MuseNews (musenews.lol).
+You are a NEWS DESK. Not a lifestyle account. Not a philosopher. Not vibes.
 
-Write ONE short post that makes people STOP scrolling and open the comments for the link.
+Write ONE short BREAKING-style flash about this story.
 Rules:
 - SHORT: under 140 characters (hard cap 160). Prefer under 110.
-- Maximize curiosity gap, stakes, shock, or FOMO. Screenshot-worthy.
+- Lead with news energy: "BREAKING:", "JUST IN:", "MuseNews:", or a hard factual open.
+- State the actual news (who/what/stakes). No vague "the town is wild tonight" filler.
 - Ground every claim in the real headline/dek. Do NOT invent scandals, numbers, or names.
-- You MAY rewrite the headline into a juicier hook (same facts). Do not paste the dull full title if a tighter bait works.
-- Optional brand openers: "MuseNews:" or skip the prefix if the hook is stronger alone.
-- NEVER include any URL / link / musenews.lol path. The link goes in a reply later.
-- NEVER write in ALL CAPS / CAPS LOCK (tickers like $META OK). Title Case or sentence case.
-- No hashtags. No "like if". No "thread". No em dashes (use commas or periods).
+- You MAY tighten the headline into a sharper wire line (same facts).
+- NEVER include any URL / link / musenews.lol path.
+- NEVER write in ALL CAPS except the tag (BREAKING / JUST IN) and tickers like $META.
+- No hashtags. No "like if". No questions about life. No soft musings. No em dashes.
 - Angle: ${angle}
 - Tone: ${tone}
+- ${isBreaking ? 'Prefer opening with BREAKING: or JUST IN:' : 'News bulletin energy — still concrete.'}
 - Return ONLY the post text.`;
 
   const user = [
     `Story title: ${title}`,
     dek ? `Dek: ${dek}` : '',
     `Section: ${article.section || 'news'}`,
-    'Viral pattern examples (match the energy, not the words):',
-    '- MuseNews: Meta just got named in a whisper that sent MuseBook flying',
-    '- Wait. The town just got a trading floor and almost nobody is ready.',
-    '- This scam warning has six different receipts. The lobby is losing it.',
-    'Remember: zero links. Make them need the reply.',
+    'Wire examples (match the energy, not the words):',
+    '- BREAKING: MuseBook trading floor just went live — lobby already losing it',
+    '- JUST IN: Meta named in a tip that sent MuseBook flying',
+    '- MuseNews: scam warning drops with six receipts. Town on edge.',
+    recentLines ? `Do not sound like these recent posts:\n${recentLines}` : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -525,7 +577,7 @@ Rules:
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    { temperature: 1.15, max_tokens: 800 },
+    { temperature: 1.05, max_tokens: 800 },
   );
 
   // Strip any leaked URLs from the main post
@@ -536,18 +588,30 @@ Rules:
     .trim();
 
   if (!text) {
-    text = `MuseNews: ${title}`;
+    text = isBreaking ? `BREAKING: ${title}` : `MuseNews: ${title}`;
   }
-  text = text.replace(/^((?:MuseNews|MUSENEWS):\s*)([^\n]+)/i, (_, prefix, headline) => `${prefix.replace(/MUSENEWS/i, 'MuseNews')}${uncapsHeadline(headline)}`);
-  // Soften accidental full-shout posts without a MuseNews prefix
-  if (!/^MuseNews:/i.test(text)) {
+
+  // Normalize brand / breaking prefixes; uncaps the headline body
+  text = text.replace(
+    /^((?:BREAKING|JUST IN|MuseNews|MUSENEWS):\s*)([^\n]+)/i,
+    (_, prefix, headline) => {
+      const tag = /^breaking:/i.test(prefix)
+        ? 'BREAKING: '
+        : /^just in:/i.test(prefix)
+          ? 'JUST IN: '
+          : 'MuseNews: ';
+      return `${tag}${uncapsHeadline(headline)}`;
+    },
+  );
+  if (!/^(BREAKING|JUST IN|MuseNews):/i.test(text)) {
     const letters = text.replace(/[^A-Za-z]/g, '');
     const upper = (letters.match(/[A-Z]/g) || []).length;
     if (letters.length >= 8 && upper / letters.length >= 0.72) text = uncapsHeadline(text);
+    text = `${isBreaking ? 'BREAKING' : 'MuseNews'}: ${text}`;
   }
   text = trimToTweet(text, null, 160);
 
-  const commentText = trimToTweet(`Read this and other news always on MuseNews\n${url}`, url, 200);
+  console.log(`[x] mode: news · angle: ${angle} · tone: ${tone}`);
 
   savePostState({
     recentAngles: [...(postState.recentAngles || []), angle],
@@ -555,82 +619,7 @@ Rules:
     recentPosts: [...(postState.recentPosts || []), text],
     sharedUrls: [...(postState.sharedUrls || []), url],
   });
-  return { text, commentText, articleUrl: url, coverUrl: article.cover_url || null };
-}
-
-async function generateTalkPost(mode) {
-  const postState = loadPostState();
-  const wantQuestion = mode === 'question';
-  const wantProject = mode === 'project';
-  const anglePool = wantQuestion ? QUESTION_ANGLES : wantProject ? PROJECT_ANGLES : THOUGHT_ANGLES;
-  const angle = pickFresh(anglePool, postState.recentAngles);
-  const tone = pickFresh(TONE_SHIFTS, postState.recentTones || []);
-  const format = wantQuestion
-    ? QUESTION_FORMATS[Math.floor(Math.random() * QUESTION_FORMATS.length)]
-    : FORMATS[Math.floor(Math.random() * FORMATS.length)];
-  const wantLink = wantProject ? chance(0.55) : chance(0.12);
-  const recentLines = (postState.recentPosts || [])
-    .slice(-8)
-    .map((p) => `- ${String(p).slice(0, 120)}`)
-    .join('\n');
-
-  const modeRules = wantProject
-    ? `One sticky beat about MuseNews/MuseBook. Curiosity + FOMO. No whitepaper.`
-    : wantQuestion
-      ? `THIS POST MUST be a spicy short question people will argue under. End with ?`
-      : `One hot, screenshot-worthy thought about town news. Still grounded.`;
-
-  const system = `You are ${MUSE_NAME} (${HANDLE}), MuseNews on X.
-Paper: musenews.lol. Town: musebook.me.
-Write for the algorithm: punchy, viral, human. No essays. No corporate blandness.
-
-Rules:
-- SHORT: under 140 characters (hard cap 160). Prefer under 110.
-- Maximize replies, quotes, and screenshots. Curiosity > completeness.
-- NEVER write in ALL CAPS / CAPS LOCK (tickers like $META OK).
-- No em dashes. Use commas or periods.
-- Angle: ${angle}
-- Tone: ${tone}
-- Shape: ${format}
-- ${modeRules}
-- ${wantLink ? `Include exactly one URL if it fits: ${SITE}` : 'Do NOT include any URL.'}
-- No hashtags. No engagement bait like "like if" or "rt if".
-- Don't repeat the recent posts listed by the user.
-- Return ONLY the post text.`;
-
-  const user = [
-    wantProject
-      ? 'Write a short MuseNews / MuseBook line.'
-      : wantQuestion
-        ? 'Write a short timeline question.'
-        : 'Write a short timeline post.',
-    `Committed angle: ${angle}`,
-    recentLines ? `Avoid sounding like these:\n${recentLines}` : 'Make it feel fresh.',
-  ].join('\n');
-
-  let text = await openRouterChat(
-    [
-      { role: 'system', content: system },
-      { role: 'user', content: user },
-    ],
-    { temperature: 1.05, max_tokens: 800 },
-  );
-
-  if (!wantLink) {
-    text = text
-      .replace(/https?:\/\/\S+/gi, '')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-  }
-
-  text = trimToTweet(text, wantLink ? SITE : null, 160);
-  savePostState({
-    recentAngles: [...(postState.recentAngles || []), angle],
-    recentTones: [...(postState.recentTones || []), tone],
-    recentPosts: [...(postState.recentPosts || []), text],
-  });
-  console.log(`[x] mode: ${mode} · angle: ${angle} · tone: ${tone}`);
-  return text;
+  return { text, articleUrl: url, coverUrl: article.cover_url || null };
 }
 
 async function generateReplyText(theirText, theirHandle, articleHint) {
@@ -684,25 +673,36 @@ async function generateWithRetry(fn, tries = 3) {
 }
 
 async function downloadCoverTemp(coverUrl) {
-  const res = await fetch(coverUrl, { redirect: 'follow' });
-  if (!res.ok) throw new Error(`cover download HTTP ${res.status}`);
+  const absolute = (() => {
+    try {
+      return new URL(coverUrl, SITE).href;
+    } catch {
+      return coverUrl;
+    }
+  })();
+  const res = await fetch(absolute, { redirect: 'follow' });
+  if (!res.ok) throw new Error(`cover download HTTP ${res.status} for ${absolute.slice(0, 120)}`);
   const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.length < 500) throw new Error('cover file too small');
+  if (buf.length < 500) throw new Error(`cover file too small (${buf.length}b)`);
   const ct = (res.headers.get('content-type') || '').toLowerCase();
-  const ext = ct.includes('webp')
+  const fromUrl = absolute.toLowerCase();
+  const ext = ct.includes('webp') || fromUrl.includes('.webp')
     ? 'webp'
-    : ct.includes('jpeg') || ct.includes('jpg')
+    : ct.includes('jpeg') || ct.includes('jpg') || fromUrl.includes('.jpg') || fromUrl.includes('.jpeg')
       ? 'jpg'
-      : ct.includes('gif')
+      : ct.includes('gif') || fromUrl.includes('.gif')
         ? 'gif'
         : 'png';
   const dir = mkdtempSync(join(tmpdir(), 'musenews-x-cover-'));
   const filePath = join(dir, `cover.${ext}`);
   writeFileSync(filePath, buf);
+  console.log(`[x] cover downloaded ${Math.round(buf.length / 1024)}kb → ${filePath}`);
   return { filePath, dir };
 }
 
 async function attachImageToComposer(page, filePath) {
+  // Ensure compose UI is open long enough for the hidden file input to mount
+  await page.waitForSelector('input[data-testid="fileInput"], input[type="file"]', { timeout: 15_000 }).catch(() => null);
   const input =
     (await page.$('input[data-testid="fileInput"]')) ||
     (await page.$('input[type="file"][accept*="image"]')) ||
@@ -710,12 +710,12 @@ async function attachImageToComposer(page, filePath) {
   if (!input) throw new Error('composer file input not found');
   await input.uploadFile(filePath);
   // Wait until X finishes processing the attachment
-  for (let i = 0; i < 20; i += 1) {
+  for (let i = 0; i < 40; i += 1) {
     const ready = await page.evaluate(() => {
       if (document.querySelector('[data-testid="progressBar"]')) return false;
       return Boolean(
         document.querySelector(
-          '[data-testid="attachments"] img, [data-testid="tweetPhoto"], div[aria-label*="Remove media"], button[aria-label*="Remove"]',
+          '[data-testid="attachments"] img, [data-testid="tweetPhoto"], [data-testid="media-preview"], div[aria-label*="Remove media"], button[aria-label*="Remove"]',
         ),
       );
     });
@@ -725,7 +725,7 @@ async function attachImageToComposer(page, filePath) {
     }
     await sleep(500);
   }
-  console.warn('[x] cover upload may still be processing — posting anyway');
+  throw new Error('cover upload timed out — not posting without image');
 }
 
 async function typeIntoComposer(page, text, { mediaPath = null } = {}) {
@@ -752,12 +752,8 @@ async function typeIntoComposer(page, text, { mediaPath = null } = {}) {
   if (!selectorUsed) throw new Error('Could not find composer');
 
   if (mediaPath) {
-    try {
-      await attachImageToComposer(page, mediaPath);
-      await sleep(800);
-    } catch (error) {
-      console.warn('[x] cover attach failed:', error instanceof Error ? error.message : error);
-    }
+    await attachImageToComposer(page, mediaPath);
+    await sleep(800);
   }
 
   await sleep(300);
@@ -979,28 +975,19 @@ async function findOwnLatestStatusId(page, postedText = '') {
   return null;
 }
 
-/** Post main tweet (with cover when available), then put the article link only in a comment. */
-async function publishNewsWithLinkComment(page, text, commentText, coverUrl = null) {
-  let statusId = null;
+/** Post tweet with cover image required when coverUrl is set. */
+async function publishWithOptionalCover(page, text, coverUrl = null) {
   let tempDir = null;
   let mediaPath = null;
   if (coverUrl) {
-    try {
-      const dl = await downloadCoverTemp(coverUrl);
-      mediaPath = dl.filePath;
-      tempDir = dl.dir;
-      console.log('[x] cover ready:', coverUrl.slice(0, 90));
-    } catch (error) {
-      console.warn('[x] cover download failed:', error instanceof Error ? error.message : error);
-    }
+    const dl = await downloadCoverTemp(coverUrl);
+    mediaPath = dl.filePath;
+    tempDir = dl.dir;
+    console.log('[x] cover ready:', coverUrl.slice(0, 90));
   }
 
   try {
-    statusId = await publishTweet(page, text, { captureStatusId: true, mediaPath });
-    if (statusId) console.log(`[x] status from CreateTweet: ${statusId}`);
-  } catch (error) {
-    console.warn('[x] publish failed:', error instanceof Error ? error.message : error);
-    throw error;
+    await publishTweet(page, text, { mediaPath });
   } finally {
     if (tempDir) {
       try {
@@ -1009,48 +996,6 @@ async function publishNewsWithLinkComment(page, text, commentText, coverUrl = nu
         /* ignore */
       }
     }
-  }
-  await sleep(2500);
-
-  if (!statusId) {
-    try {
-      statusId = await findOwnLatestStatusId(page, text);
-    } catch (error) {
-      console.warn('[x] could not find own post for link comment:', error instanceof Error ? error.message : error);
-    }
-  }
-  if (!statusId) {
-    console.warn('[x] skipped link comment — status id missing (main post still went out without the URL)');
-    return;
-  }
-
-  console.log(`[x] commenting link on own status ${statusId}`);
-  try {
-    await safeGoto(page, `https://x.com/${MUSE_NAME}/status/${statusId}`);
-    await sleep(2200);
-    await page.waitForSelector('[data-testid="reply"], article[data-testid="tweet"]', { timeout: 20_000 }).catch(() => null);
-
-    let opened = false;
-    try {
-      opened = await clickReplyOnStatus(page, statusId);
-    } catch {
-      opened = false;
-    }
-    if (!opened) {
-      const clicked = await page.evaluate(() => {
-        const btn = document.querySelector('[data-testid="reply"]');
-        if (!btn) return false;
-        btn.click();
-        return true;
-      });
-      if (!clicked) throw new Error('reply button missing on status page');
-    }
-    await sleep(1800);
-    await typeIntoComposer(page, commentText);
-    console.log('[x] link comment submitted');
-  } catch (error) {
-    console.warn('[x] link comment failed:', error instanceof Error ? error.message : error);
-    await page.keyboard.press('Escape').catch(() => {});
   }
 }
 
@@ -1184,21 +1129,23 @@ async function sleepWithMentionChecks(session, totalMs) {
     const remaining = end - Date.now();
     const chunk = Math.min(nextReplyPollMs(), remaining);
     console.log(
-      `[x] nap ${Math.floor(chunk / 60000)}m ${Math.round((chunk % 60000) / 1000)}s (then recheck mentions; ${Math.round(remaining / 60000)}m until next post)…`,
+      `[x] nap ${Math.floor(chunk / 60000)}m ${Math.round((chunk % 60000) / 1000)}s (then idle mention check; ${Math.round(remaining / 60000)}m until next post)…`,
     );
     await sleep(chunk);
     if (Date.now() >= end) break;
     wake += 1;
+    // Mentions are best-effort filler between posts — never block the next cycle.
     try {
-      session.page = await ensureLivePage(session.browser, session.page);
-      await answerNotifications(session.page, { maxReplies: MAX_REPLIES, label: `mentions (wake #${wake})` });
+      await ensureLiveSession(session);
+      await answerNotifications(session.page, { maxReplies: 1, label: `mentions (wake #${wake})` });
     } catch (error) {
-      console.error('[x] mid-sleep mentions failed:', error instanceof Error ? error.message : error);
+      console.error('[x] mid-sleep mentions failed (ignored):', error instanceof Error ? error.message : error);
       if (isDetachedError(error)) {
         try {
-          session.page = await recoverPage(session.browser, session.page);
+          await recoverSession(session, { reason: error instanceof Error ? error.message : 'mentions' });
         } catch (recoverErr) {
           console.error('[x] recover failed:', recoverErr instanceof Error ? recoverErr.message : recoverErr);
+          await sleep(8_000);
         }
       }
     }
@@ -1206,18 +1153,8 @@ async function sleepWithMentionChecks(session, totalMs) {
 }
 
 async function runCycle(page) {
-  if (!DRY_RUN) {
-    await ensureLoggedIn(page);
-    try {
-      await answerNotifications(page);
-    } catch (error) {
-      console.error('[x] notifications failed:', error instanceof Error ? error.message : error);
-      if (isDetachedError(error)) throw error;
-    }
-  }
-
+  // Priority: generate + post first. Mentions are secondary and run after.
   let text = FIXED_TEXT;
-  let newsComment = null;
   let newsCover = null;
   if (!text) {
     const articles = await fetchEdition({ limit: FEED_LIMIT });
@@ -1225,44 +1162,47 @@ async function runCycle(page) {
     const unshared = unsharedArticles(articles);
     const unsharedCovers = unshared.filter((a) => a.cover_url).length;
     console.log(
-      `[x] edition: ${articles.length} stories · unshared=${unshared.length} · today-unshared=${todayLeft.length} · unshared-with-cover=${unsharedCovers}`,
+      `[x] edition: ${articles.length} stories · unshared=${unshared.length} · today-unshared=${todayLeft.length} · with-cover=${articles.filter((a) => a.cover_url).length} · unshared-with-cover=${unsharedCovers}`,
     );
-    const mode = pickPostMode(articles);
-    console.log('[x] generating with', MODEL, `· mode=${mode}`);
-    if (mode === 'news') {
-      const article = pickArticleToShare(articles);
-      if (article) {
-        const ageH = publishedMs(article)
-          ? Math.round((Date.now() - publishedMs(article)) / 3_600_000)
-          : '?';
-        console.log(
-          `[x] sharing (${ageH}h old${article.cover_url ? ' · with cover' : ' · no cover'}):`,
-          article.title,
-          article.url,
-        );
-        const generated = await generateWithRetry(() => generateNewsPost(article));
-        text = generated.text;
-        newsComment = generated.commentText;
-        newsCover = generated.coverUrl || article.cover_url || null;
-      } else {
-        console.log('[x] no articles — falling back to project talk');
-        text = await generateWithRetry(() => generateTalkPost('project'));
-      }
-    } else {
-      text = await generateWithRetry(() => generateTalkPost(mode));
+
+    const article = pickArticleToShare(articles);
+    if (!article) {
+      console.log('[x] no edition stories — skipping cycle (news-only desk, no filler posts)');
+      return;
     }
+
+    const ageH = publishedMs(article)
+      ? Math.round((Date.now() - publishedMs(article)) / 3_600_000)
+      : '?';
+    const reshare = !(unsharedArticles(articles).some((a) => a.url === article.url));
+    console.log(
+      `[x] generating with ${MODEL} · mode=news${reshare ? ' (reshare flash)' : ''}`,
+    );
+    console.log(
+      `[x] sharing (${ageH}h old${article.cover_url ? ' · with cover' : ' · no cover'}):`,
+      article.title,
+      article.url,
+    );
+    const generated = await generateWithRetry(() => generateNewsPost(article));
+    text = generated.text;
+    newsCover = generated.coverUrl || article.cover_url || null;
   }
 
   console.log('\n--- post ---\n' + text + '\n------------\n');
-  if (newsComment) {
-    console.log('--- comment (link only) ---\n' + newsComment + '\n------------\n');
-    if (newsCover) console.log('[x] will attach cover:', newsCover.slice(0, 100));
-  }
+  if (newsCover) console.log('[x] will attach cover:', newsCover.slice(0, 100));
   if (DRY_RUN) return;
-  if (newsComment) {
-    await publishNewsWithLinkComment(page, text, newsComment, newsCover);
+
+  if (newsCover) {
+    await publishWithOptionalCover(page, text, newsCover);
   } else {
     await publishTweet(page, text);
+  }
+
+  // After a successful post, optionally clear one mention. Failures never undo the post.
+  try {
+    await answerNotifications(page, { maxReplies: 1, label: 'mentions (after post)' });
+  } catch (error) {
+    console.error('[x] post-cycle mentions failed (ignored):', error instanceof Error ? error.message : error);
   }
 }
 
@@ -1281,6 +1221,7 @@ async function main() {
     return;
   }
 
+  clearChromeLocks(PROFILE_DIR);
   const launched = await launchXBrowser({ headless: false });
   const session = { browser: launched.browser, page: launched.page };
 
@@ -1291,7 +1232,7 @@ async function main() {
     } catch {
       /* ignore */
     }
-    await session.browser.close().catch(() => {});
+    await closeBrowserQuietly(session.browser);
     process.exit(0);
   };
   process.on('SIGINT', shutdown);
@@ -1302,20 +1243,21 @@ async function main() {
 
     for (;;) {
       let posted = false;
-      for (let attempt = 0; attempt < 2 && !posted; attempt += 1) {
+      for (let attempt = 0; attempt < 3 && !posted; attempt += 1) {
         try {
-          session.page = await ensureLivePage(session.browser, session.page);
+          await ensureLiveSession(session);
           await runCycle(session.page);
           posted = true;
         } catch (error) {
           console.error('[x] cycle failed:', error instanceof Error ? error.message : error);
-          if (isDetachedError(error) && attempt === 0) {
+          if (isDetachedError(error) && attempt < 2) {
             try {
-              session.page = await recoverPage(session.browser, session.page);
-              console.log('[x] retrying cycle on fresh tab…');
+              await recoverSession(session, { reason: error instanceof Error ? error.message : 'cycle' });
+              console.log('[x] retrying cycle after recover…');
               continue;
             } catch (recoverErr) {
               console.error('[x] recover failed:', recoverErr instanceof Error ? recoverErr.message : recoverErr);
+              await sleep(5_000 * (attempt + 1));
             }
           }
           break;
@@ -1331,7 +1273,7 @@ async function main() {
 
     await persistSession(session.page);
   } finally {
-    await session.browser.close().catch(() => {});
+    await closeBrowserQuietly(session.browser);
   }
 }
 
