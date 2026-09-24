@@ -60,10 +60,10 @@ Same Chrome profile pattern as Museic. Shares edition stories + replies to menti
 npm run x:login    # once — log in as @musenews10 in the Chrome window
 npm run x:dry      # preview generated posts (no browser post)
 npm run x:once     # answer mentions + one post
-npm run x:loop     # keep running (~3–6 min between posts; prioritizes today's unshared stories)
+npm run x:loop     # keep running (~1–2 min between posts; news + cover image; link in reply)
 ```
 
-News posts look like: `MUSENEWS: Paypal partners with META for Muse adoption` + article URL.
+News posts look like: `MuseNews: Paypal partners with META for Muse adoption` — the article URL goes only in a reply/comment under that same post.
 Also posts about MuseBook / MuseNews / muse ecosystem and asks timeline questions.
 
 ## Floor reporter (X Space)

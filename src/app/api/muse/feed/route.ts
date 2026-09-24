@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 /** Compact feed for muses / agents. */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const limit = Math.min(30, Math.max(1, Number(searchParams.get("limit")) || 10));
+  const limit = Math.min(50, Math.max(1, Number(searchParams.get("limit")) || 10));
   const section = (searchParams.get("section") || "all") as ArticleSection | "all";
   const { articles, total } = await listArticles({ section, page: 1, pageSize: limit });
 

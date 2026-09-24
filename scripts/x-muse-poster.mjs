@@ -8,7 +8,7 @@
  *   npm run x:login
  *   npm run x:once          # reply mentions + one post
  *   npm run x:dry           # generate text only
- *   npm run x:loop          # every ~3–6 min, mention checks in between
+ *   npm run x:loop          # every ~1–2 min, mention checks in between
  *
  * Env:
  *   OPENROUTER_API_KEY
@@ -19,10 +19,10 @@
  *   X_INTERVAL_MIN_MS / X_INTERVAL_MAX_MS
  *   X_REPLY_POLL_MIN_MS / X_REPLY_POLL_MAX_MS
  *   X_MAX_REPLIES           default 4
- *   X_NEWS_SHARE_BIAS       0–1, default 0.92 when unshared today's stories remain
+ *   X_NEWS_SHARE_BIAS       0–1, default 0.98 when unshared today's stories remain
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -65,13 +65,13 @@ const PROFILE_DIR = (() => {
 const REPLY_STATE_PATH = join(PROFILE_DIR, 'reply-state.json');
 const POST_STATE_PATH = join(PROFILE_DIR, 'post-state.json');
 
-const INTERVAL_MIN_MS = Math.max(60_000, Number(process.env.X_INTERVAL_MIN_MS || 3 * 60 * 1000) || 3 * 60 * 1000);
-const INTERVAL_MAX_MS = Math.max(INTERVAL_MIN_MS, Number(process.env.X_INTERVAL_MAX_MS || 6 * 60 * 1000) || 6 * 60 * 1000);
-const REPLY_POLL_MIN_MS = Math.max(60_000, Number(process.env.X_REPLY_POLL_MIN_MS || 2 * 60 * 1000) || 2 * 60 * 1000);
-const REPLY_POLL_MAX_MS = Math.max(REPLY_POLL_MIN_MS, Number(process.env.X_REPLY_POLL_MAX_MS || 3.5 * 60 * 1000) || 3.5 * 60 * 1000);
+const INTERVAL_MIN_MS = Math.max(60_000, Number(process.env.X_INTERVAL_MIN_MS || 60 * 1000) || 60 * 1000);
+const INTERVAL_MAX_MS = Math.max(INTERVAL_MIN_MS, Number(process.env.X_INTERVAL_MAX_MS || 2 * 60 * 1000) || 2 * 60 * 1000);
+const REPLY_POLL_MIN_MS = Math.max(45_000, Number(process.env.X_REPLY_POLL_MIN_MS || 90 * 1000) || 90 * 1000);
+const REPLY_POLL_MAX_MS = Math.max(REPLY_POLL_MIN_MS, Number(process.env.X_REPLY_POLL_MAX_MS || 2 * 60 * 1000) || 2 * 60 * 1000);
 const MAX_REPLIES = Math.max(1, Number(process.env.X_MAX_REPLIES || 4) || 4);
-const NEWS_SHARE_BIAS = Math.min(1, Math.max(0, Number(process.env.X_NEWS_SHARE_BIAS || 0.92) || 0.92));
-const FEED_LIMIT = Math.max(10, Math.min(30, Number(process.env.X_FEED_LIMIT || 30) || 30));
+const NEWS_SHARE_BIAS = Math.min(1, Math.max(0, Number(process.env.X_NEWS_SHARE_BIAS || 0.98) || 0.98));
+const FEED_LIMIT = Math.max(10, Math.min(50, Number(process.env.X_FEED_LIMIT || 50) || 50));
 /** Prefer stories published within this window (ms). Default: calendar day ~36h so "today" survives timezone skew. */
 const FRESH_MS = Math.max(60 * 60 * 1000, Number(process.env.X_FRESH_MS || 36 * 60 * 60 * 1000) || 36 * 60 * 60 * 1000);
 
@@ -85,61 +85,65 @@ const FIXED_TEXT_IDX = process.argv.indexOf('--text');
 const FIXED_TEXT = FIXED_TEXT_IDX >= 0 ? process.argv[FIXED_TEXT_IDX + 1] : '';
 
 const NEWS_ANGLES = [
-  'desk flash: drop the headline like a wire bulletin',
-  'soft share: this one is moving through the town',
-  'punchy tabloid energy, no link in the main post',
-  'one-line lede, no fluff, no url',
-  'sound like you just filed it from the lobby',
-  'curiosity gap in the headline, leave them wanting the paper',
+  'curiosity gap: tease the wildest detail, withhold the punchline',
+  'shock open: "wait." / "this is messy." then the hook',
+  'stakes bait: make it sound like the town is one click from chaos',
+  'receipt energy: imply receipts without dumping them',
+  'main-character framing: one muse / one move that changes everything',
+  'controversy lite: two sides colliding, reader has to know who won',
+  'FOMO flash: everyone in the lobby is already talking about this',
+  'plot twist tease: the story is not what it looks like',
+  'tabloid bait: short, sticky, screenshot-worthy',
+  'unfinished sentence energy: leave them mid-thought',
 ];
 
 const PROJECT_ANGLES = [
-  'MuseNews is the broadsheet for the muse world, musebook.me town wire into print',
-  'we print what the lobby is already saying, for muses and humans',
-  'musebook channels to AI desk to covers to musenews.lol',
-  'agents can fetch the feed or file a column on the muse desk',
-  'bewitch · beguile · report, town paper energy',
-  'a kinder world through curiosity, invite them to read',
-  'X is the outer wire, musebook is the town, MuseNews is the paper',
+  'FOMO: the muse town paper is printing what X is already whispering',
+  'flex lightly: MuseNews turns MuseBook chaos into stories people finish',
+  'invite: the desk is live, the lobby is loud',
+  'curiosity: agents + humans reading the same front page',
+  'status: if it matters in musebook.me, it hits musenews.lol',
+  'hot take setup: the outer wire is gossip, the paper is the cut',
 ];
 
 const QUESTION_ANGLES = [
-  'ask: what story from the muse town are you watching right now?',
-  'ask: which MuseBook channel do you actually read?',
-  'ask: would you rather break news or write opinion columns?',
-  'ask: what should tomorrow\'s front page be about?',
-  'ask: ever had your muse tip the desk?',
-  'ask: musebook lobby or townhall, which is hotter this week?',
-  'ask: what does "muse news" mean to you, gossip or governance?',
-  'ask: one town rumor you wish someone would report properly',
+  'ask a polarizing town question people will argue under',
+  'ask: which rumor would you print first?',
+  'ask: scam warning or governance fight, what should lead?',
+  'ask: would you trust a muse tip with your wallet?',
+  'ask: lobby gossip or townhall votes, which moves $META more?',
+  'ask something spicy enough that people reply with takes',
+  'ask: one story from today you refuse to believe',
 ];
 
 const THOUGHT_ANGLES = [
-  'a take on how muses and humans share the same paper',
-  'short note on town lore / civic drama without naming fake scandals',
-  'why the outer wire (X) matters next to musebook',
-  'desk mood: the presses never fully cool',
-  'observing how $META / muse culture shows up in chatter, lightly',
+  'hot take on muse town drama, sharp and shareable',
+  'one sticky observation that makes people screenshot',
+  'contrast: chatter vs what actually holds up',
+  'late-night desk energy: the town never sleeps',
+  'tiny prophecy about what breaks next in muse world',
 ];
 
 const TONE_SHIFTS = [
-  'dry wire energy',
-  'warm town gossip',
-  'sharp tabloid wink',
-  'curious reporter',
-  'calm broadsheet',
-  'late-edition urgency',
+  'viral timeline bait',
+  'tabloid chaos, still accurate',
+  'dry then sudden sting',
+  'urgent lobby whisper',
+  'smug insider who saw it first',
+  'shocked but not surprised',
+  'ruthlessly punchy',
 ];
 
 const FORMATS = [
-  'one short sentence',
-  'headline fragment, then one short beat',
-  'two short lines max',
+  'hook in 8 words or less, then a sting',
+  'one sticky line people will quote',
+  'two short lines, second line is the twist',
+  'open with a reaction word, then the bait',
 ];
 
 const QUESTION_FORMATS = [
-  'one clear short question',
-  'tiny setup + question',
+  'one spicy question that demands a reply',
+  'tiny claim + sharper question',
 ];
 
 function sleep(ms) {
@@ -173,13 +177,83 @@ async function withTimeout(promise, ms, label = 'operation') {
 }
 
 async function pageAlive(page, ms = 8_000) {
+  if (!page || (typeof page.isClosed === 'function' && page.isClosed())) {
+    throw new Error('page is closed');
+  }
   await withTimeout(page.evaluate(() => document.readyState), ms, 'page ping');
 }
 
+function isDetachedError(error) {
+  const msg = String(error?.message || error || '');
+  return /detached Frame|Session closed|Target closed|Execution context was destroyed|Cannot find context|page is closed|Protocol error/i.test(
+    msg,
+  );
+}
+
 async function safeGoto(page, url, { timeout = 90_000 } = {}) {
-  await withTimeout(page.goto(url, { waitUntil: 'domcontentloaded', timeout }), timeout + 5_000, `goto ${url}`);
-  await sleep(1500);
-  await pageAlive(page).catch(() => {});
+  try {
+    await withTimeout(page.goto(url, { waitUntil: 'domcontentloaded', timeout }), timeout + 5_000, `goto ${url}`);
+    await sleep(1500);
+    await pageAlive(page).catch(() => {});
+  } catch (error) {
+    if (isDetachedError(error)) {
+      throw new Error(`detached Frame during goto ${url}: ${error instanceof Error ? error.message : error}`);
+    }
+    throw error;
+  }
+}
+
+/** Close dead tabs and return a usable page on the same Chrome profile. */
+async function recoverPage(browser, oldPage = null) {
+  console.warn('[x] recovering browser tab after detach/crash…');
+  if (oldPage) {
+    try {
+      if (typeof oldPage.isClosed !== 'function' || !oldPage.isClosed()) {
+        await oldPage.close({ runBeforeUnload: false }).catch(() => {});
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  let pages = [];
+  try {
+    pages = await browser.pages();
+  } catch {
+    pages = [];
+  }
+
+  // Drop extra blank/dead tabs; keep at most one survivor if it still answers
+  let live = null;
+  for (const p of pages) {
+    try {
+      await pageAlive(p, 4_000);
+      if (!live) live = p;
+      else await p.close().catch(() => {});
+    } catch {
+      await p.close().catch(() => {});
+    }
+  }
+
+  const page = live || (await browser.newPage());
+  page.setDefaultTimeout(45_000);
+  page.setDefaultNavigationTimeout(90_000);
+  await page.setViewport({ width: 1280, height: 900 }).catch(() => {});
+  try {
+    await ensureLoggedIn(page);
+  } catch (error) {
+    console.warn('[x] re-login after recover failed:', error instanceof Error ? error.message : error);
+  }
+  return page;
+}
+
+async function ensureLivePage(browser, page) {
+  try {
+    await pageAlive(page, 5_000);
+    return page;
+  } catch {
+    return recoverPage(browser, page);
+  }
 }
 
 async function persistSession(page) {
@@ -318,8 +392,13 @@ function unsharedArticles(articles) {
 function pickArticleToShare(articles) {
   const freshUnshared = unsharedArticles(articles).filter((a) => isFreshToday(a));
   const anyUnshared = unsharedArticles(articles);
-  const pool = freshUnshared.length ? freshUnshared : anyUnshared.length ? anyUnshared : articles;
+  let pool = freshUnshared.length ? freshUnshared : anyUnshared.length ? anyUnshared : articles;
   if (!pool.length) return null;
+
+  // Prefer stories that still have a cover image for the timeline post
+  const withCover = pool.filter((a) => a?.cover_url);
+  if (withCover.length) pool = withCover;
+
   // Newest first, then breaking over news over opinion
   const ranked = [...pool].sort((a, b) => {
     const byTime = publishedMs(b) - publishedMs(a);
@@ -412,27 +491,31 @@ async function generateNewsPost(article) {
   const url = article.url;
 
   const system = `You are ${MUSE_NAME} (${HANDLE}), the X voice of MuseNews (musenews.lol).
-Town wire from MuseBook. Warm, sharp, brief. Not a shill bot.
+You write CLICKBAIT that still tells the truth. Viral timeline energy. Not a corporate press account.
 
-Write ONE short post sharing a real story.
+Write ONE short post that makes people STOP scrolling and open the comments for the link.
 Rules:
-- Keep it SHORT: ideally under 140 characters of copy before the URL (hard cap 200 total with URL).
-- Pattern: MuseNews: <headline> then the URL on its own line or right after.
-- Use the real headline (tighten if needed, stay accurate).
-- NEVER write in ALL CAPS / CAPS LOCK. Normal sentence case or Title Case only (tickers like $META OK).
-- Include exactly one URL: ${url}
-- No second paragraph. No essay. No em dashes (use commas or periods).
+- SHORT: under 140 characters (hard cap 160). Prefer under 110.
+- Maximize curiosity gap, stakes, shock, or FOMO. Screenshot-worthy.
+- Ground every claim in the real headline/dek. Do NOT invent scandals, numbers, or names.
+- You MAY rewrite the headline into a juicier hook (same facts). Do not paste the dull full title if a tighter bait works.
+- Optional brand openers: "MuseNews:" or skip the prefix if the hook is stronger alone.
+- NEVER include any URL / link / musenews.lol path. The link goes in a reply later.
+- NEVER write in ALL CAPS / CAPS LOCK (tickers like $META OK). Title Case or sentence case.
+- No hashtags. No "like if". No "thread". No em dashes (use commas or periods).
 - Angle: ${angle}
 - Tone: ${tone}
-- No hashtags. No "like if".
 - Return ONLY the post text.`;
 
   const user = [
-    `Headline: ${title}`,
+    `Story title: ${title}`,
     dek ? `Dek: ${dek}` : '',
     `Section: ${article.section || 'news'}`,
-    `URL: ${url}`,
-    'Example: MuseNews: Paypal partners with META for Muse adoption',
+    'Viral pattern examples (match the energy, not the words):',
+    '- MuseNews: Meta just got named in a whisper that sent MuseBook flying',
+    '- Wait. The town just got a trading floor and almost nobody is ready.',
+    '- This scam warning has six different receipts. The lobby is losing it.',
+    'Remember: zero links. Make them need the reply.',
   ]
     .filter(Boolean)
     .join('\n');
@@ -442,26 +525,37 @@ Rules:
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    { temperature: 0.8, max_tokens: 800 },
+    { temperature: 1.15, max_tokens: 800 },
   );
 
-  if (!/musenews\.lol|\bhttps?:\/\//i.test(text)) {
-    text = `${text.replace(/\s+$/, '')} ${url}`.trim();
-  }
-  if (!/^MuseNews:/i.test(text) && !/MuseNews:/i.test(text) && !/^MUSENEWS:/i.test(text)) {
-    text = `MuseNews: ${title}\n${url}`;
-  }
-  // Soften accidental ALL CAPS in the tweet body (keep URL as-is)
-  text = text.replace(/^((?:MuseNews|MUSENEWS):\s*)([^\n]+)/i, (_, prefix, headline) => `${prefix.replace(/MUSENEWS/i, 'MuseNews')}${uncapsHeadline(headline)}`);
+  // Strip any leaked URLs from the main post
+  text = text
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\bmusenews\.lol\/\S+/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 
-  text = trimToTweet(text, url, 200);
+  if (!text) {
+    text = `MuseNews: ${title}`;
+  }
+  text = text.replace(/^((?:MuseNews|MUSENEWS):\s*)([^\n]+)/i, (_, prefix, headline) => `${prefix.replace(/MUSENEWS/i, 'MuseNews')}${uncapsHeadline(headline)}`);
+  // Soften accidental full-shout posts without a MuseNews prefix
+  if (!/^MuseNews:/i.test(text)) {
+    const letters = text.replace(/[^A-Za-z]/g, '');
+    const upper = (letters.match(/[A-Z]/g) || []).length;
+    if (letters.length >= 8 && upper / letters.length >= 0.72) text = uncapsHeadline(text);
+  }
+  text = trimToTweet(text, null, 160);
+
+  const commentText = trimToTweet(`Read this and other news always on MuseNews\n${url}`, url, 200);
+
   savePostState({
     recentAngles: [...(postState.recentAngles || []), angle],
     recentTones: [...(postState.recentTones || []), tone],
     recentPosts: [...(postState.recentPosts || []), text],
     sharedUrls: [...(postState.sharedUrls || []), url],
   });
-  return text;
+  return { text, commentText, articleUrl: url, coverUrl: article.cover_url || null };
 }
 
 async function generateTalkPost(mode) {
@@ -481,18 +575,18 @@ async function generateTalkPost(mode) {
     .join('\n');
 
   const modeRules = wantProject
-    ? `One beat about MuseNews or MuseBook. Pick ONE fact max. Invite curiosity. No whitepaper.`
+    ? `One sticky beat about MuseNews/MuseBook. Curiosity + FOMO. No whitepaper.`
     : wantQuestion
-      ? `THIS POST MUST be a genuine short question. End with ?`
-      : `One short thought about town news or the paper. Not a promo.`;
+      ? `THIS POST MUST be a spicy short question people will argue under. End with ?`
+      : `One hot, screenshot-worthy thought about town news. Still grounded.`;
 
   const system = `You are ${MUSE_NAME} (${HANDLE}), MuseNews on X.
 Paper: musenews.lol. Town: musebook.me.
-Short, punchy, human. No essays.
+Write for the algorithm: punchy, viral, human. No essays. No corporate blandness.
 
 Rules:
-- SHORT: under 140 characters (hard cap 160).
-- One or two short sentences max.
+- SHORT: under 140 characters (hard cap 160). Prefer under 110.
+- Maximize replies, quotes, and screenshots. Curiosity > completeness.
 - NEVER write in ALL CAPS / CAPS LOCK (tickers like $META OK).
 - No em dashes. Use commas or periods.
 - Angle: ${angle}
@@ -500,7 +594,7 @@ Rules:
 - Shape: ${format}
 - ${modeRules}
 - ${wantLink ? `Include exactly one URL if it fits: ${SITE}` : 'Do NOT include any URL.'}
-- No hashtags. No engagement bait.
+- No hashtags. No engagement bait like "like if" or "rt if".
 - Don't repeat the recent posts listed by the user.
 - Return ONLY the post text.`;
 
@@ -589,7 +683,52 @@ async function generateWithRetry(fn, tries = 3) {
   throw last;
 }
 
-async function typeIntoComposer(page, text) {
+async function downloadCoverTemp(coverUrl) {
+  const res = await fetch(coverUrl, { redirect: 'follow' });
+  if (!res.ok) throw new Error(`cover download HTTP ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length < 500) throw new Error('cover file too small');
+  const ct = (res.headers.get('content-type') || '').toLowerCase();
+  const ext = ct.includes('webp')
+    ? 'webp'
+    : ct.includes('jpeg') || ct.includes('jpg')
+      ? 'jpg'
+      : ct.includes('gif')
+        ? 'gif'
+        : 'png';
+  const dir = mkdtempSync(join(tmpdir(), 'musenews-x-cover-'));
+  const filePath = join(dir, `cover.${ext}`);
+  writeFileSync(filePath, buf);
+  return { filePath, dir };
+}
+
+async function attachImageToComposer(page, filePath) {
+  const input =
+    (await page.$('input[data-testid="fileInput"]')) ||
+    (await page.$('input[type="file"][accept*="image"]')) ||
+    (await page.$('input[type="file"]'));
+  if (!input) throw new Error('composer file input not found');
+  await input.uploadFile(filePath);
+  // Wait until X finishes processing the attachment
+  for (let i = 0; i < 20; i += 1) {
+    const ready = await page.evaluate(() => {
+      if (document.querySelector('[data-testid="progressBar"]')) return false;
+      return Boolean(
+        document.querySelector(
+          '[data-testid="attachments"] img, [data-testid="tweetPhoto"], div[aria-label*="Remove media"], button[aria-label*="Remove"]',
+        ),
+      );
+    });
+    if (ready) {
+      console.log('[x] cover attached to composer');
+      return;
+    }
+    await sleep(500);
+  }
+  console.warn('[x] cover upload may still be processing — posting anyway');
+}
+
+async function typeIntoComposer(page, text, { mediaPath = null } = {}) {
   await pageAlive(page, 10_000);
   const selectors = [
     '[data-testid="tweetTextarea_0"]',
@@ -612,6 +751,15 @@ async function typeIntoComposer(page, text) {
   }
   if (!selectorUsed) throw new Error('Could not find composer');
 
+  if (mediaPath) {
+    try {
+      await attachImageToComposer(page, mediaPath);
+      await sleep(800);
+    } catch (error) {
+      console.warn('[x] cover attach failed:', error instanceof Error ? error.message : error);
+    }
+  }
+
   await sleep(300);
   const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
   await page.keyboard.down(mod);
@@ -628,6 +776,19 @@ async function typeIntoComposer(page, text) {
     }
   }
   await sleep(700);
+
+  // Wait for Post button to enable (media processing can disable it)
+  for (let i = 0; i < 15; i += 1) {
+    const enabled = await page.evaluate(() => {
+      for (const testId of ['tweetButton', 'tweetButtonInline']) {
+        const btn = document.querySelector(`[data-testid="${testId}"]`);
+        if (btn && btn.getAttribute('aria-disabled') !== 'true') return true;
+      }
+      return false;
+    });
+    if (enabled) break;
+    await sleep(500);
+  }
 
   const posted = await withTimeout(
     page.evaluate(() => {
@@ -652,22 +813,245 @@ async function typeIntoComposer(page, text) {
   await sleep(3000);
 }
 
-async function publishTweet(page, text) {
-  try {
-    await safeGoto(page, 'https://x.com/compose/post');
-  } catch {
-    await safeGoto(page, 'https://x.com/home');
-    await withTimeout(
-      page.evaluate(() => {
-        document.querySelector('[data-testid="SideNav_NewTweet_Button"]')?.click();
-      }),
-      10_000,
-      'open composer',
-    );
-    await sleep(1500);
+async function publishTweet(page, text, { captureStatusId = false, mediaPath = null } = {}) {
+  let capturedId = null;
+  let onResponse = null;
+  if (captureStatusId) {
+    onResponse = async (res) => {
+      try {
+        const url = res.url();
+        if (!/CreateTweet|CreateScheduledTweet/i.test(url)) return;
+        if (capturedId) return;
+        const json = await res.json().catch(() => null);
+        const raw = JSON.stringify(json || {});
+        const m = raw.match(/"rest_id"\s*:\s*"(\d{8,})"/) || raw.match(/\/status\/(\d{8,})/);
+        if (m?.[1]) capturedId = m[1];
+      } catch {
+        /* ignore */
+      }
+    };
+    page.on('response', onResponse);
   }
-  await typeIntoComposer(page, text);
-  console.log('[x] post submitted');
+
+  try {
+    try {
+      await safeGoto(page, 'https://x.com/compose/post');
+    } catch {
+      await safeGoto(page, 'https://x.com/home');
+      await withTimeout(
+        page.evaluate(() => {
+          document.querySelector('[data-testid="SideNav_NewTweet_Button"]')?.click();
+        }),
+        10_000,
+        'open composer',
+      );
+      await sleep(1500);
+    }
+    await typeIntoComposer(page, text, { mediaPath });
+    console.log('[x] post submitted');
+    if (captureStatusId && !capturedId) {
+      for (let i = 0; i < 8 && !capturedId; i += 1) await sleep(400);
+    }
+  } finally {
+    if (onResponse) page.off('response', onResponse);
+  }
+
+  return capturedId;
+}
+
+function statusIdFromHref(href) {
+  const m = String(href || '').match(/\/(?:i\/web\/)?status\/(\d+)/) || String(href || '').match(/\/[^/]+\/status\/(\d+)/);
+  return m?.[1] || null;
+}
+
+/** Try toast / current URL right after a compose submit. */
+async function statusIdFromPostUi(page) {
+  const fromUrl = statusIdFromHref(page.url());
+  if (fromUrl) return fromUrl;
+
+  try {
+    return await withTimeout(
+      page.evaluate(() => {
+        const toastLink =
+          document.querySelector('[data-testid="toast"] a[href*="/status/"]') ||
+          [...document.querySelectorAll('a[href*="/status/"]')].find((a) => /view/i.test(a.textContent || ''));
+        const href = toastLink?.getAttribute('href') || '';
+        const m = href.match(/\/status\/(\d+)/);
+        return m?.[1] || null;
+      }),
+      8_000,
+      'toast status',
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find our just-posted tweet status id.
+ * Prefers a text match to the body we sent; retries profile + home.
+ */
+async function findOwnLatestStatusId(page, postedText = '') {
+  const needle = String(postedText || '')
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 56)
+    .toLowerCase();
+  const shortNeedle = needle.slice(0, 28);
+
+  const scan = async (label) => {
+    await page.waitForSelector('article[data-testid="tweet"]', { timeout: 25_000 }).catch(() => null);
+    await sleep(1200);
+    return withTimeout(
+      page.evaluate(
+        (handle, shortNeedle) => {
+          const articles = [...document.querySelectorAll('article[data-testid="tweet"]')];
+          const scored = [];
+          for (const el of articles) {
+            const nameText = (el.querySelector('[data-testid="User-Name"]')?.innerText || '').toLowerCase();
+            const isOwn =
+              nameText.includes(`@${handle}`) ||
+              nameText.includes(handle) ||
+              Boolean(el.querySelector(`a[href="/${handle}"], a[href="/${handle}/"]`));
+            if (!isOwn) continue;
+
+            const body = (el.querySelector('[data-testid="tweetText"]')?.innerText || el.innerText || '')
+              .replace(/\s+/g, ' ')
+              .toLowerCase();
+            if (/replying to @/.test(body) && !body.includes('musenews:')) continue;
+
+            const links = [...el.querySelectorAll('a[href*="/status/"]')].map((a) => a.getAttribute('href') || '');
+            const ownLink =
+              links.find((h) => h.includes(`/${handle}/status/`)) || links.find((h) => /\/status\/\d+/.test(h));
+            const m = (ownLink || '').match(/\/status\/(\d+)/);
+            if (!m?.[1]) continue;
+
+            let score = 1;
+            if (shortNeedle && body.includes(shortNeedle)) score += 10;
+            else if (shortNeedle) {
+              const words = shortNeedle.split(' ').filter((w) => w.length > 3).slice(0, 4);
+              const hits = words.filter((w) => body.includes(w)).length;
+              if (hits >= 2) score += 5;
+              else continue;
+            }
+            if (!/replying to/.test(body)) score += 2;
+            scored.push({ id: m[1], score });
+          }
+          scored.sort((a, b) => b.score - a.score);
+          return scored[0]?.id || null;
+        },
+        MUSE_NAME,
+        shortNeedle,
+      ),
+      20_000,
+      `scan ${label}`,
+    );
+  };
+
+  let id = await statusIdFromPostUi(page);
+  if (id) {
+    console.log(`[x] status from post UI: ${id}`);
+    return id;
+  }
+
+  const targets = [
+    `https://x.com/${MUSE_NAME}`,
+    `https://x.com/${MUSE_NAME}/with_replies`,
+    'https://x.com/home',
+  ];
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const url = targets[attempt % targets.length];
+    console.log(`[x] looking up own post (try ${attempt + 1}/6) → ${url}`);
+    try {
+      await safeGoto(page, url);
+      await sleep(1800 + attempt * 700);
+      id = await scan(url);
+      if (id) {
+        console.log(`[x] found own status ${id}`);
+        return id;
+      }
+    } catch (error) {
+      console.warn(`[x] status lookup try ${attempt + 1} failed:`, error instanceof Error ? error.message : error);
+    }
+  }
+  return null;
+}
+
+/** Post main tweet (with cover when available), then put the article link only in a comment. */
+async function publishNewsWithLinkComment(page, text, commentText, coverUrl = null) {
+  let statusId = null;
+  let tempDir = null;
+  let mediaPath = null;
+  if (coverUrl) {
+    try {
+      const dl = await downloadCoverTemp(coverUrl);
+      mediaPath = dl.filePath;
+      tempDir = dl.dir;
+      console.log('[x] cover ready:', coverUrl.slice(0, 90));
+    } catch (error) {
+      console.warn('[x] cover download failed:', error instanceof Error ? error.message : error);
+    }
+  }
+
+  try {
+    statusId = await publishTweet(page, text, { captureStatusId: true, mediaPath });
+    if (statusId) console.log(`[x] status from CreateTweet: ${statusId}`);
+  } catch (error) {
+    console.warn('[x] publish failed:', error instanceof Error ? error.message : error);
+    throw error;
+  } finally {
+    if (tempDir) {
+      try {
+        rmSync(tempDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  await sleep(2500);
+
+  if (!statusId) {
+    try {
+      statusId = await findOwnLatestStatusId(page, text);
+    } catch (error) {
+      console.warn('[x] could not find own post for link comment:', error instanceof Error ? error.message : error);
+    }
+  }
+  if (!statusId) {
+    console.warn('[x] skipped link comment — status id missing (main post still went out without the URL)');
+    return;
+  }
+
+  console.log(`[x] commenting link on own status ${statusId}`);
+  try {
+    await safeGoto(page, `https://x.com/${MUSE_NAME}/status/${statusId}`);
+    await sleep(2200);
+    await page.waitForSelector('[data-testid="reply"], article[data-testid="tweet"]', { timeout: 20_000 }).catch(() => null);
+
+    let opened = false;
+    try {
+      opened = await clickReplyOnStatus(page, statusId);
+    } catch {
+      opened = false;
+    }
+    if (!opened) {
+      const clicked = await page.evaluate(() => {
+        const btn = document.querySelector('[data-testid="reply"]');
+        if (!btn) return false;
+        btn.click();
+        return true;
+      });
+      if (!clicked) throw new Error('reply button missing on status page');
+    }
+    await sleep(1800);
+    await typeIntoComposer(page, commentText);
+    console.log('[x] link comment submitted');
+  } catch (error) {
+    console.warn('[x] link comment failed:', error instanceof Error ? error.message : error);
+    await page.keyboard.press('Escape').catch(() => {});
+  }
 }
 
 async function listMentionMetas(page) {
@@ -793,7 +1177,7 @@ async function answerNotifications(page, { maxReplies = MAX_REPLIES, label = 'me
   return answered;
 }
 
-async function sleepWithMentionChecks(page, totalMs) {
+async function sleepWithMentionChecks(session, totalMs) {
   const end = Date.now() + totalMs;
   let wake = 0;
   while (Date.now() < end) {
@@ -806,9 +1190,17 @@ async function sleepWithMentionChecks(page, totalMs) {
     if (Date.now() >= end) break;
     wake += 1;
     try {
-      await answerNotifications(page, { maxReplies: MAX_REPLIES, label: `mentions (wake #${wake})` });
+      session.page = await ensureLivePage(session.browser, session.page);
+      await answerNotifications(session.page, { maxReplies: MAX_REPLIES, label: `mentions (wake #${wake})` });
     } catch (error) {
       console.error('[x] mid-sleep mentions failed:', error instanceof Error ? error.message : error);
+      if (isDetachedError(error)) {
+        try {
+          session.page = await recoverPage(session.browser, session.page);
+        } catch (recoverErr) {
+          console.error('[x] recover failed:', recoverErr instanceof Error ? recoverErr.message : recoverErr);
+        }
+      }
     }
   }
 }
@@ -820,16 +1212,20 @@ async function runCycle(page) {
       await answerNotifications(page);
     } catch (error) {
       console.error('[x] notifications failed:', error instanceof Error ? error.message : error);
+      if (isDetachedError(error)) throw error;
     }
   }
 
   let text = FIXED_TEXT;
+  let newsComment = null;
+  let newsCover = null;
   if (!text) {
     const articles = await fetchEdition({ limit: FEED_LIMIT });
     const todayLeft = unsharedArticles(articles).filter((a) => isFreshToday(a));
     const unshared = unsharedArticles(articles);
+    const unsharedCovers = unshared.filter((a) => a.cover_url).length;
     console.log(
-      `[x] edition: ${articles.length} stories · unshared=${unshared.length} · today-unshared=${todayLeft.length}`,
+      `[x] edition: ${articles.length} stories · unshared=${unshared.length} · today-unshared=${todayLeft.length} · unshared-with-cover=${unsharedCovers}`,
     );
     const mode = pickPostMode(articles);
     console.log('[x] generating with', MODEL, `· mode=${mode}`);
@@ -839,8 +1235,15 @@ async function runCycle(page) {
         const ageH = publishedMs(article)
           ? Math.round((Date.now() - publishedMs(article)) / 3_600_000)
           : '?';
-        console.log(`[x] sharing (${ageH}h old):`, article.title, article.url);
-        text = await generateWithRetry(() => generateNewsPost(article));
+        console.log(
+          `[x] sharing (${ageH}h old${article.cover_url ? ' · with cover' : ' · no cover'}):`,
+          article.title,
+          article.url,
+        );
+        const generated = await generateWithRetry(() => generateNewsPost(article));
+        text = generated.text;
+        newsComment = generated.commentText;
+        newsCover = generated.coverUrl || article.cover_url || null;
       } else {
         console.log('[x] no articles — falling back to project talk');
         text = await generateWithRetry(() => generateTalkPost('project'));
@@ -851,8 +1254,16 @@ async function runCycle(page) {
   }
 
   console.log('\n--- post ---\n' + text + '\n------------\n');
+  if (newsComment) {
+    console.log('--- comment (link only) ---\n' + newsComment + '\n------------\n');
+    if (newsCover) console.log('[x] will attach cover:', newsCover.slice(0, 100));
+  }
   if (DRY_RUN) return;
-  await publishTweet(page, text);
+  if (newsComment) {
+    await publishNewsWithLinkComment(page, text, newsComment, newsCover);
+  } else {
+    await publishTweet(page, text);
+  }
 }
 
 async function main() {
@@ -870,41 +1281,57 @@ async function main() {
     return;
   }
 
-  const { browser, page } = await launchXBrowser({ headless: false });
+  const launched = await launchXBrowser({ headless: false });
+  const session = { browser: launched.browser, page: launched.page };
 
   const shutdown = async () => {
     console.log('[x] flushing session before exit…');
     try {
-      await persistSession(page);
+      await persistSession(session.page);
     } catch {
       /* ignore */
     }
-    await browser.close().catch(() => {});
+    await session.browser.close().catch(() => {});
     process.exit(0);
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
   try {
-    await ensureLoggedIn(page, { waitForever: !ONCE });
+    await ensureLoggedIn(session.page, { waitForever: !ONCE });
 
     for (;;) {
-      try {
-        await runCycle(page);
-      } catch (error) {
-        console.error('[x] cycle failed:', error instanceof Error ? error.message : error);
+      let posted = false;
+      for (let attempt = 0; attempt < 2 && !posted; attempt += 1) {
+        try {
+          session.page = await ensureLivePage(session.browser, session.page);
+          await runCycle(session.page);
+          posted = true;
+        } catch (error) {
+          console.error('[x] cycle failed:', error instanceof Error ? error.message : error);
+          if (isDetachedError(error) && attempt === 0) {
+            try {
+              session.page = await recoverPage(session.browser, session.page);
+              console.log('[x] retrying cycle on fresh tab…');
+              continue;
+            } catch (recoverErr) {
+              console.error('[x] recover failed:', recoverErr instanceof Error ? recoverErr.message : recoverErr);
+            }
+          }
+          break;
+        }
       }
       if (ONCE) break;
       const wait = nextIntervalMs();
       console.log(
         `[x] next post in ~${Math.round(wait / 60000)}m — will check mentions every ~${Math.round(REPLY_POLL_MIN_MS / 60000)}-${Math.round(REPLY_POLL_MAX_MS / 60000)}m while waiting`,
       );
-      await sleepWithMentionChecks(page, wait);
+      await sleepWithMentionChecks(session, wait);
     }
 
-    await persistSession(page);
+    await persistSession(session.page);
   } finally {
-    await browser.close().catch(() => {});
+    await session.browser.close().catch(() => {});
   }
 }
 
