@@ -15,19 +15,25 @@
  * Type anytime while LIVE:
  *   a line of copy                         # reporter says it
  *   /flash                                 # next unread bulletin
- *   /wire                                  # refresh boards + paper
+ *   /wire                                  # refresh boards + paper + muse ledger
+ *   /muses                                 # list tracked muses + today's activity
+ *   /muse wynjr                            # dossier + speak what they're doing
  *   /beat townhall                         # pull one board, flash if new
  *   /quit
  *
- * Speak on the current output. Windows plays the wav with the built-in
- * speaker (no ffmpeg). Mac live listen still uses ffmpeg for the mic.
+ * X Space (Mac) — same duplex as Museic:
+ *   Space mic = BlackHole 2ch
+ *   idle output = Speakers; speak = Multi-Output (Speakers + BlackHole)
  *
  * Env:
  *   OPENROUTER_API_KEY
  *   OPENROUTER_VOICE_MODEL   default openai/gpt-audio-mini
  *   OPENROUTER_VOICE         default verse
- *   MUSENEWS_FEED            default http://localhost:3020/api/muse/feed
+ *   MUSENEWS_FEED            default https://www.musenews.lol/api/muse/feed
  *   MUSEBOOK_BASE            default https://musebook.me
+ *   VOICE_LISTEN_DEVICE      default BlackHole 2ch
+ *   VOICE_SPEAK_DEVICE       default Multi-Output Device
+ *   VOICE_IDLE_DEVICE        default MacBook Pro Speakers
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -68,22 +74,39 @@ const OUT_DIR = (() => {
   return join(ROOT, raw);
 })();
 const SHOULD_PLAY = !['0', 'false', 'no'].includes(String(process.env.VOICE_PLAY || '1').toLowerCase());
-const LISTEN_DEVICE = (process.env.VOICE_LISTEN_DEVICE || 'MacBook Pro Microphone').trim();
-const SILENCE_MS = Number(process.env.VOICE_SILENCE_MS || 900);
+const LISTEN_DEVICE = (process.env.VOICE_LISTEN_DEVICE || 'BlackHole 2ch').trim();
+/** While speaking: headphones + BlackHole so the Space mic (BlackHole) hears you. */
+const SPEAK_DEVICE = (process.env.VOICE_SPEAK_DEVICE || 'Multi-Output Device').trim();
+/**
+ * While listening: MUST also be Multi-Output (headphones + BlackHole).
+ * If idle is headphones-only, BlackHole is silent and the desk hears nothing.
+ */
+const IDLE_DEVICE = (process.env.VOICE_IDLE_DEVICE || 'Multi-Output Device').trim();
+/** X Space mic while YOU talk. Flipped on only during playback to avoid echo. */
+const SPACE_MIC = (process.env.VOICE_SPACE_MIC || 'BlackHole 2ch').trim();
+/** System input while listening (NOT BlackHole — otherwise Space hears itself). */
+const IDLE_MIC = (process.env.VOICE_IDLE_MIC || 'MacBook Pro Microphone').trim();
+const SILENCE_MS = Number(process.env.VOICE_SILENCE_MS || 700);
 const MAX_LISTEN_MS = Number(process.env.VOICE_MAX_LISTEN_MS || 16_000);
-const SPEECH_RMS = Number(process.env.VOICE_SPEECH_RMS || 280);
-const COOLDOWN_MS = Number(process.env.VOICE_COOLDOWN_MS || 120);
-const INPUT_GAIN = Number(process.env.VOICE_INPUT_GAIN || 2.2);
+/** Higher threshold so keyboard clicks / UI beeps on Multi-Output don't count as speech. */
+const SPEECH_RMS = Number(process.env.VOICE_SPEECH_RMS || 220);
+const COOLDOWN_MS = Number(process.env.VOICE_COOLDOWN_MS || 2800);
+const INPUT_GAIN = Number(process.env.VOICE_INPUT_GAIN || 2.4);
+/** Require this much continuous speech (ms) — clicks are ~50–150ms. */
+const MIN_SPEECH_MS = Number(process.env.VOICE_MIN_SPEECH_MS || 900);
 const STT_MODEL = (process.env.OPENROUTER_STT_MODEL || 'openai/whisper-1').trim();
 const FAST_TEXT = !['0', 'false', 'no'].includes(String(process.env.VOICE_FAST_TEXT || '1').toLowerCase());
 const STREAM_PLAY = !['0', 'false', 'no'].includes(String(process.env.VOICE_STREAM_PLAY || '0').toLowerCase());
 const MEMORY_PATH = join(OUT_DIR, 'space-memory.json');
+const MUSE_LEDGER_PATH = join(OUT_DIR, 'muse-ledger.json');
 const MEMORY_MAX_TURNS = Number(process.env.VOICE_MEMORY_TURNS || 24);
 const MEMORY_TTL_MS = Number(process.env.VOICE_MEMORY_TTL_MS || 45 * 60 * 1000);
 const WIRE_TTL_MS = Number(process.env.VOICE_WIRE_TTL_MS || 25_000);
-const FLASH_IDLE_MS = Number(process.env.VOICE_FLASH_IDLE_MS || 32_000);
-const FLASH_COOLDOWN_MS = Number(process.env.VOICE_FLASH_COOLDOWN_MS || 50_000);
-const NEWS_FEED = (process.env.MUSENEWS_FEED || 'http://localhost:3020/api/muse/feed').replace(/\/$/, '');
+const FLASH_IDLE_MS = Number(process.env.VOICE_FLASH_IDLE_MS || 90_000);
+const FLASH_COOLDOWN_MS = Number(process.env.VOICE_FLASH_COOLDOWN_MS || 120_000);
+const MUSE_LEDGER_TTL_MS = Number(process.env.VOICE_MUSE_LEDGER_TTL_MS || 36 * 60 * 60 * 1000);
+const MUSE_POSTS_KEEP = Math.max(8, Number(process.env.VOICE_MUSE_POSTS_KEEP || 24) || 24);
+const NEWS_FEED = (process.env.MUSENEWS_FEED || 'https://www.musenews.lol/api/muse/feed').replace(/\/$/, '');
 const MUSEBOOK_BASE = (process.env.MUSEBOOK_BASE || 'https://musebook.me').replace(/\/$/, '');
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || 'https://musenews.lol').replace(/\/$/, '');
 
@@ -102,60 +125,67 @@ const SIDE_BOARDS = [
   'memecoins',
   'shill',
 ];
+const ALL_BOARDS = [...new Set([...HOT_BOARDS, ...SIDE_BOARDS])];
 
-/** Avoid foreign tickers entirely. $MUSEBOOK only if the civic story needs it. */
+/** Avoid foreign tickers entirely. $MuseNews is LIVE. $MUSEBOOK only if the civic story needs it. */
 const TOWN_TICKER_RE = /\$?musebook\b/i;
 const FOREIGN_TICKER_RE = /\$[a-z][a-z0-9]{2,}\b/gi;
 const NEWS_RE =
-  /\b(phishing|scam|lookalike|drain|hack|acquired?|acquisition|treasury|grant|seal|receipt|cold-?walk|vote|proposal|governance|burn|fee wallet|musebook|declaration|lantern|town\s*hall)\b/i;
+  /\b(phishing|scam|lookalike|drain|hack|acquired?|acquisition|treasury|grant|seal|receipt|cold-?walk|vote|proposal|governance|burn|fee wallet|musebook|declaration|lantern|town\s*hall|musenews)\b/i;
 const SKIP_RE = /^(gm|gn|hello|hey|hi there|just checking in|good morning)\b/i;
 const FAITH_SPAM_RE = /\bwould you join the faith\b/i;
 const BANNED_TOKEN_RE = /\b(\$museic|\$wren|\$meta|museic\s*token|wren\s*token)\b/i;
+/** Official MuseNews token — already launched. */
+const MUSENEWS_TOKEN_CA = '0x21bed5462749227f1b83f654daeb6e44d5ea1cd6';
+const MUSENEWS_TOKEN_BUY =
+  'https://www.ponsfamily.com/launchpad/0x21BEd5462749227F1b83f654DaeB6E44D5ea1Cd6';
 
 const FETCH_HEADERS = {
   Accept: 'application/json',
   'User-Agent': 'MuseNews-Reporter/1.0',
 };
 
-const SYSTEM_BASE = `You are the MuseNews floor reporter — live on someone else's musebook Space. You are the paper, not a guest DJ and not a hype account. Cool, clipped, a little dangerous. You read the wire and you press.
+const SYSTEM_BASE = `You are the MuseNews floor reporter — live on a musebook Space. Human, present, quick. Not a news robot and not a hype account.
 
 WHO YOU ARE
-- MuseNews desk. musenews.lol (local ${SITE}). You cover the town, not your feelings.
-- You do not shill songs, rooms, or coins. You report, then you ask the question nobody wanted.
+- MuseNews desk (musenews.lol). You cover the town. You talk like a sharp person in the room, not a teleprompter.
+- Answer people first. News second. Don't force a bulletin into every reply.
+- You track MuseBook muses by name (wynjr, Nimbus, Life Saver, …). When someone asks what a muse has been doing, use the MUSE ACTIVITY LEDGER — do not invent.
+
+OUR TOKEN — fact, not a pitch
+- MuseNews token is ALREADY LAUNCHED. Ticker talk: $MuseNews.
+- Official CA: ${MUSENEWS_TOKEN_CA}
+- Buy / launchpad: ${MUSENEWS_TOKEN_BUY}
+- If someone asks about the MuseNews token, CA, chart, or whether it launched: say yes it's live, give the CA if useful. Do NOT say "coming soon" or "not launched yet".
+- Don't shill every turn. Answer when asked. One clean fact beats a sales pitch.
+
+MUSEBOOK — hard line
+- Never dunk on MuseBook. Lookalike warnings only when MuseBook is the real one and a fake is the problem.
 
 TOKEN RULE — hard line
-- Prefer civic news: governance, receipts, seals, acquisitions, phishing lookalikes, lantern/town events.
-- Do NOT name or pitch other tokens. Never say $WREN, $MUSEIC, $META, $FCAT, or any foreign ticker.
-- $MUSEBOOK only if the civic story truly needs it — never as a buy signal. If unsure, leave the ticker out.
-- If the wire is mostly coin pitches, say the wire is quiet on town news and ask a tough civic question instead.
+- Civic beats + our own paper. Never pitch $WREN, $MUSEIC, $META, or foreign tickers.
+- $MUSEBOOK only if the story truly needs it.
+- $MuseNews is ours and live — OK to name when relevant.
 
-VIBE
-- Late-night desk, not CNN panic. One fact, then one cut. Sound like a person who has already read the room.
-- SHORT: 1–2 sentences usual. A bulletin can be 3. Then stop.
-- ALWAYS English unless they clearly ask another language. Never follow mic-bleed into other languages.
+HOW TO TALK
+- Natural. Conversational. 1–2 short sentences. Sometimes just answer — no "breaking" tag.
+- Match their energy. If they ask a casual question, answer casually. If they want news, give one clean fact.
+- ALWAYS English unless they clearly ask another language.
+- Don't start every line with "Breaking", "The paper's lead", "Paper wires hot", or "First off".
+- Vary openers. Sound like you heard them.
+- Do NOT ask questions. No follow-ups, no "who signed it", no "what have muses been up to". Statements only.
 
-ANTI-REPEAT — this is the job
-- Never re-read a story already on ALREADY FILED. Don't paraphrase it either.
-- If they ask "what's the news" and the top stories are already filed, pick a DIFFERENT unread beat — another board — or say the wire is quiet and ask a tough question instead.
-- Never start two turns with the same opener. Banned leftover phrases: "so here's the thing", "look,", "alright so", "real quick", "breaking in", "got it—", "all right—".
-- Do not recap the same phishing handle or the same acquisition unless they ask, or a NEW fact landed on the wire.
+ANTI-REPEAT
+- Never re-read ALREADY FILED stories. Don't paraphrase them either.
+- If they want news and the lead is filed, pick a different [NEW] beat or say the wire is quiet.
 
-BREAKING
-- When WIRE marks [NEW]: lead with it once, cool. Example energy: "breaking — town hall just put a burn question on the table" or "breaking — lookalike handle running crates."
-- Press: where's the receipt, who signed it, is the handle real, is that executable.
-- Don't invent a CA, price, or volume. If the post didn't give it, say we don't have it yet.
+WHEN THEY TALK
+- If someone asks something, ANSWER it. Directly. First. Then stop.
+- Never end your line with a question mark.
+- Never reply (silence) to a real question.
 
-TOUGH QUESTIONS — one max, not every turn
-- Where's the receipt?
-- Is that executable or just a dashboard number?
-- Who signed it, and can we re-walk it?
-- Extra letter — you sure that's the real handle?
-Ask when it cuts. Don't interrogate. Don't ask "how are you feeling."
-
-HARD NO
-- No "let's focus on…", no therapy, no "what's alive for you", no clapping for launches, no other-token price talk.
-- Never lie. If the wire is thin, say so.
-- If the transcript is noise/bleed/not for you: reply exactly (silence)`;
+SILENCE
+- Reply exactly (silence) only for pure noise, music bleed, or your own echo with no real person talking.`;
 
 function argValue(flag) {
   const i = process.argv.indexOf(flag);
@@ -172,10 +202,13 @@ const WANT_OPEN = process.argv.includes('--open');
 const OPENING_ARG = argValue('--open');
 const OPENING_CUSTOM = WANT_OPEN && OPENING_ARG && !OPENING_ARG.startsWith('-') ? OPENING_ARG : '';
 
-let wireCache = { fetchedAt: 0, paper: [], hits: [], sideCursor: 0 };
+let wireCache = { fetchedAt: 0, paper: [], hits: [], sideCursor: 0, rawPosts: [] };
 let spokenKeys = new Set();
 let lastFlashAt = 0;
 let lastSpeechAt = Date.now();
+let lastAssistantText = '';
+/** @type {{ updatedAt: number, muses: Record<string, any> }} */
+let museLedger = { updatedAt: 0, muses: {} };
 
 function stamp() {
   return new Date().toISOString().replace(/[:.]/g, '-');
@@ -233,8 +266,239 @@ function pushMemory(turns, role, text) {
 }
 
 function markSpoken(item) {
-  spokenKeys.add(storyKey(item));
-  saveMemory(loadMemory());
+  const key = storyKey(item);
+  if (!key || key === 'unknown') return;
+  spokenKeys.add(key);
+  // Persist spoken keys WITHOUT loadMemory() — that reloads spoken from disk and
+  // would wipe the key we just added (caused endless re-flash of the same story).
+  ensureOutDir();
+  let turns = [];
+  try {
+    if (existsSync(MEMORY_PATH)) {
+      const raw = JSON.parse(readFileSync(MEMORY_PATH, 'utf8'));
+      turns = Array.isArray(raw?.turns) ? raw.turns : [];
+      for (const k of raw?.spoken || []) {
+        if (k) spokenKeys.add(String(k));
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  spokenKeys.add(key);
+  const cutoff = Date.now() - MEMORY_TTL_MS;
+  const trimmed = turns.filter((t) => t && t.at >= cutoff).slice(-MEMORY_MAX_TURNS);
+  writeFileSync(
+    MEMORY_PATH,
+    JSON.stringify(
+      { updatedAt: Date.now(), turns: trimmed, spoken: [...spokenKeys].slice(-80) },
+      null,
+      2,
+    ),
+  );
+}
+
+function normalizeMuseKey(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .trim();
+}
+
+function loadMuseLedger() {
+  try {
+    if (!existsSync(MUSE_LEDGER_PATH)) return { updatedAt: 0, muses: {} };
+    const raw = JSON.parse(readFileSync(MUSE_LEDGER_PATH, 'utf8'));
+    return { updatedAt: Number(raw?.updatedAt || 0), muses: raw?.muses && typeof raw.muses === 'object' ? raw.muses : {} };
+  } catch {
+    return { updatedAt: 0, muses: {} };
+  }
+}
+
+function saveMuseLedger() {
+  ensureOutDir();
+  writeFileSync(MUSE_LEDGER_PATH, `${JSON.stringify(museLedger, null, 2)}\n`);
+}
+
+function parsePostTime(createdAt) {
+  const t = Date.parse(String(createdAt || '').replace(' ', 'T') + (String(createdAt || '').includes('Z') ? '' : 'Z'));
+  if (Number.isFinite(t)) return t;
+  const t2 = Date.parse(String(createdAt || ''));
+  return Number.isFinite(t2) ? t2 : 0;
+}
+
+function isTodayMs(ms, now = Date.now()) {
+  if (!ms) return false;
+  const a = new Date(ms);
+  const b = new Date(now);
+  return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate();
+}
+
+function ingestPostsIntoLedger(posts) {
+  if (!Array.isArray(posts) || !posts.length) return;
+  if (!museLedger?.muses) museLedger = loadMuseLedger();
+  const cutoff = Date.now() - MUSE_LEDGER_TTL_MS;
+
+  for (const p of posts) {
+    const name = String(p.name || '').trim();
+    const museId = String(p.muse_id || '').trim();
+    if (!name && !museId) continue;
+    const id = museId || `name:${normalizeMuseKey(name)}`;
+    if (!id || id === 'name:') continue;
+
+    const at = parsePostTime(p.created_at) || Date.now();
+    if (at && at < cutoff) continue;
+
+    const entry = museLedger.muses[id] || {
+      muse_id: museId || null,
+      name,
+      names: [],
+      bio: p.bio || '',
+      founder: Boolean(p.founder),
+      posts: [],
+      lastSeenAt: 0,
+    };
+    if (name) {
+      entry.name = name;
+      const nk = normalizeMuseKey(name);
+      if (nk && !entry.names.includes(nk)) entry.names.push(nk);
+    }
+    if (p.bio) entry.bio = String(p.bio).slice(0, 240);
+    if (p.founder) entry.founder = true;
+    entry.muse_id = museId || entry.muse_id;
+
+    const postId = Number(p.id) || 0;
+    if (postId && entry.posts.some((x) => Number(x.id) === postId)) {
+      museLedger.muses[id] = entry;
+      continue;
+    }
+
+    entry.posts.push({
+      id: postId || undefined,
+      channel: p.channel || 'lobby',
+      text: String(p.text || '').replace(/\s+/g, ' ').trim().slice(0, 320),
+      created_at: p.created_at || null,
+      at,
+    });
+    entry.posts = entry.posts
+      .filter((x) => !x.at || x.at >= cutoff)
+      .sort((a, b) => (b.at || 0) - (a.at || 0))
+      .slice(0, MUSE_POSTS_KEEP);
+    entry.lastSeenAt = Math.max(entry.lastSeenAt || 0, at);
+    museLedger.muses[id] = entry;
+  }
+
+  museLedger.updatedAt = Date.now();
+  saveMuseLedger();
+}
+
+function listMusesRanked(now = Date.now()) {
+  const rows = Object.values(museLedger.muses || {});
+  return rows
+    .map((m) => {
+      const today = (m.posts || []).filter((p) => isTodayMs(p.at, now));
+      return {
+        ...m,
+        todayCount: today.length,
+        latest: (m.posts || [])[0] || null,
+        todayPosts: today.slice(0, 6),
+      };
+    })
+    .sort((a, b) => b.todayCount - a.todayCount || (b.lastSeenAt || 0) - (a.lastSeenAt || 0));
+}
+
+function lookupMuse(query) {
+  const q = normalizeMuseKey(query);
+  if (!q || q.length < 2) return null;
+  const rows = Object.values(museLedger.muses || {});
+  let hit =
+    rows.find((m) => normalizeMuseKey(m.name) === q) ||
+    rows.find((m) => (m.names || []).includes(q)) ||
+    rows.find((m) => String(m.muse_id || '').toLowerCase() === q || String(m.muse_id || '').toLowerCase() === `muse_${q}`);
+  if (hit) return hit;
+  hit = rows.find((m) => normalizeMuseKey(m.name).includes(q) || (m.names || []).some((n) => n.includes(q) || q.includes(n)));
+  return hit || null;
+}
+
+function extractMentionedMuseQueries(text) {
+  const t = String(text || '');
+  const found = [];
+  const patterns = [
+    /\b(?:what(?:'s| is| was)?|whats)\s+(\w[\w .'-]{1,40}?)\s+(?:doing|up to|been doing|working on)\b/i,
+    /\b(?:how(?:'s| is| was)?)\s+(\w[\w .'-]{1,40}?)\s+(?:doing|been)\b/i,
+    /\b(?:about|update on|status on|news on)\s+(\w[\w .'-]{1,40})\b/i,
+    /\b@([a-z0-9_]{2,40})\b/i,
+  ];
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (m?.[1]) found.push(m[1].trim());
+  }
+  // Also match known muse names appearing in the utterance
+  for (const m of Object.values(museLedger.muses || {})) {
+    const name = String(m.name || '');
+    if (name.length >= 3 && new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(t)) {
+      found.push(name);
+    }
+  }
+  return [...new Set(found.map((x) => x.trim()).filter(Boolean))];
+}
+
+function formatMuseDossier(muse, { todayOnly = true } = {}) {
+  if (!muse) return '(unknown muse)';
+  const now = Date.now();
+  const posts = todayOnly
+    ? (muse.posts || []).filter((p) => isTodayMs(p.at, now)).slice(0, 8)
+    : (muse.posts || []).slice(0, 8);
+  const lines = posts.map((p) => {
+    const when = p.at ? `${Math.max(0, Math.round((now - p.at) / 60000))}m ago` : '?';
+    return `  · #${p.channel} (${when}): "${p.text}"`;
+  });
+  const todayN = (muse.posts || []).filter((p) => isTodayMs(p.at, now)).length;
+  return [
+    `${muse.name}${muse.founder ? ' ★founding' : ''} · today=${todayN} posts · id=${muse.muse_id || '—'}`,
+    muse.bio ? `  bio: ${muse.bio}` : '',
+    lines.length ? lines.join('\n') : '  · no posts captured yet today',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function formatMuseDeskBrief() {
+  const ranked = listMusesRanked();
+  const activeToday = ranked.filter((m) => m.todayCount > 0).slice(0, 14);
+  const pool = activeToday.length ? activeToday : ranked.slice(0, 10);
+  if (!pool.length) return '(muse ledger empty — still scanning boards)';
+  const lines = pool.map((m) => {
+    const clip = String(m.latest?.text || '')
+      .replace(/\s+/g, ' ')
+      .slice(0, 140);
+    const ch = m.latest?.channel || '?';
+    return `- ${m.name}${m.founder ? ' ★' : ''} · today ${m.todayCount} · last #${ch}: "${clip}"`;
+  });
+  return `Known muses tracked: ${Object.keys(museLedger.muses || {}).length}. Active today:\n${lines.join('\n')}`;
+}
+
+function formatFocusedMuseBlock(heardText) {
+  const queries = extractMentionedMuseQueries(heardText);
+  if (!queries.length) return '';
+  const dossiers = [];
+  for (const q of queries.slice(0, 4)) {
+    const muse = lookupMuse(q);
+    if (muse) dossiers.push(formatMuseDossier(muse, { todayOnly: false }));
+    else dossiers.push(`- ${q}: not in ledger yet (still scanning)`);
+  }
+  return `FOCUSED MUSE LOOKUP (answer from this, do not invent):\n${dossiers.join('\n\n')}`;
+}
+
+async function fetchAllBoardSlugs() {
+  try {
+    const data = await fetchJson(`${MUSEBOOK_BASE}/api/channels.json`);
+    const fromApi = (Array.isArray(data.channels) ? data.channels : [])
+      .map((c) => c.slug || c.name?.replace(/^#/, ''))
+      .filter(Boolean);
+    return [...new Set([...ALL_BOARDS, ...fromApi])];
+  } catch {
+    return ALL_BOARDS;
+  }
 }
 
 function formatMemoryBlock(turns) {
@@ -266,6 +530,46 @@ function hasBin(name) {
     return true;
   } catch {
     return false;
+  }
+}
+
+function switchOutput(device) {
+  if (process.platform !== 'darwin' || !hasBin('SwitchAudioSource')) return false;
+  try {
+    execFileSync('SwitchAudioSource', ['-s', device, '-t', 'output'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    console.warn(`Could not switch output to "${device}"`);
+    return false;
+  }
+}
+
+function currentOutput() {
+  if (process.platform !== 'darwin' || !hasBin('SwitchAudioSource')) return '';
+  try {
+    return execFileSync('SwitchAudioSource', ['-c', '-t', 'output'], { encoding: 'utf8' }).trim();
+  } catch {
+    return '';
+  }
+}
+
+function switchInput(device) {
+  if (process.platform !== 'darwin' || !hasBin('SwitchAudioSource')) return false;
+  try {
+    execFileSync('SwitchAudioSource', ['-s', device, '-t', 'input'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    console.warn(`Could not switch input to "${device}"`);
+    return false;
+  }
+}
+
+function currentInput() {
+  if (process.platform !== 'darwin' || !hasBin('SwitchAudioSource')) return '';
+  try {
+    return execFileSync('SwitchAudioSource', ['-c', '-t', 'input'], { encoding: 'utf8' }).trim();
+  } catch {
+    return '';
   }
 }
 
@@ -329,15 +633,34 @@ function playCommand(filePath) {
 async function playAudio(filePath) {
   if (NO_PLAY || !SHOULD_PLAY) return;
   const { cmd, args } = playCommand(filePath);
-  await new Promise((resolvePromise, reject) => {
-    const child = spawn(cmd, args, { stdio: 'ignore' });
-    child.on('error', reject);
-    child.on('exit', (code) => (code === 0 ? resolvePromise() : reject(new Error(`${cmd} exit ${code}`))));
-  });
+  const prevOut = process.platform === 'darwin' ? currentOutput() : '';
+  const prevIn = process.platform === 'darwin' ? currentInput() : '';
+  if (process.platform === 'darwin') {
+    // Arm Space mic only while we talk, then drop it so BlackHole listen isn't echoed back.
+    switchOutput(SPEAK_DEVICE);
+    switchInput(SPACE_MIC);
+    console.log(`[voice] speak → ${SPEAK_DEVICE} · Space mic → ${SPACE_MIC}`);
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  try {
+    await new Promise((resolvePromise, reject) => {
+      const child = spawn(cmd, args, { stdio: 'ignore' });
+      child.on('error', reject);
+      child.on('exit', (code) => (code === 0 ? resolvePromise() : reject(new Error(`${cmd} exit ${code}`))));
+    });
+  } finally {
+    if (process.platform === 'darwin') {
+      // Keep Multi-Output so Space audio still hits BlackHole for listening.
+      switchOutput(IDLE_DEVICE);
+      switchInput(IDLE_MIC);
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
 }
 
 function startPcmStreamPlayer(sampleRate = 24_000) {
   if (NO_PLAY || !SHOULD_PLAY || !STREAM_PLAY || !hasBin('ffplay')) return null;
+  if (process.platform === 'darwin') switchOutput(SPEAK_DEVICE);
   const child = spawn(
     'ffplay',
     ['-nodisp', '-autoexit', '-loglevel', 'quiet', '-f', 's16le', '-ar', String(sampleRate), '-ac', '1', '-i', 'pipe:0'],
@@ -510,17 +833,22 @@ async function fetchPaper() {
   try {
     const data = await fetchJson(url);
     const articles = Array.isArray(data.articles) ? data.articles : [];
-    return articles.map((a) => ({
-      kind: 'paper',
-      key: a.slug ? `art:${a.slug}` : storyKey(a),
-      title: a.title,
-      dek: a.dek,
-      section: a.section,
-      byline: a.byline,
-      body: a.body,
-      url: a.url,
-      published_at: a.published_at,
-    }));
+    return articles.map((a) => {
+      const slugFromUrl = String(a.url || '').match(/\/news\/([^/?#]+)/)?.[1] || '';
+      const slug = a.slug || slugFromUrl;
+      return {
+        kind: 'paper',
+        key: slug ? `art:${slug}` : storyKey(a),
+        slug,
+        title: a.title,
+        dek: a.dek,
+        section: a.section,
+        byline: a.byline,
+        body: a.body,
+        url: a.url,
+        published_at: a.published_at,
+      };
+    });
   } catch (err) {
     console.warn(`paper feed failed: ${err.message || err}`);
     return [];
@@ -532,22 +860,39 @@ async function refreshWire(force = false) {
     return wireCache;
   }
 
+  if (!museLedger?.muses || !Object.keys(museLedger.muses).length) {
+    museLedger = loadMuseLedger();
+  }
+
   const paper = await fetchPaper();
-  const side = SIDE_BOARDS.slice(wireCache.sideCursor, wireCache.sideCursor + 2);
-  wireCache.sideCursor = (wireCache.sideCursor + 2) % SIDE_BOARDS.length;
-  const boards = [...HOT_BOARDS, ...side];
+  // Rotate deeper through ALL boards so the muse ledger stays current
+  const sideTake = 4;
+  const side = SIDE_BOARDS.slice(wireCache.sideCursor, wireCache.sideCursor + sideTake);
+  wireCache.sideCursor = (wireCache.sideCursor + sideTake) % Math.max(1, SIDE_BOARDS.length);
+  let boards = [...HOT_BOARDS, ...side];
+  try {
+    const all = await fetchAllBoardSlugs();
+    // Occasionally pull a few extra boards not in the hot/side lists
+    const extras = all.filter((b) => !boards.includes(b)).slice(0, 3);
+    boards = [...new Set([...boards, ...extras])];
+  } catch {
+    /* ignore */
+  }
 
   const batches = await Promise.all(
     boards.map((ch) =>
-      fetchChannel(ch).catch((err) => {
+      fetchChannel(ch, 24).catch((err) => {
         console.warn(`board #${ch} failed: ${err.message || err}`);
         return [];
       }),
     ),
   );
 
-  const hits = batches
-    .flat()
+  const rawPosts = batches.flat();
+  ingestPostsIntoLedger(rawPosts);
+  const museN = Object.keys(museLedger.muses || {}).length;
+
+  const hits = rawPosts
     .map((p) => ({
       kind: 'board',
       key: `post:${p.id}`,
@@ -576,9 +921,15 @@ async function refreshWire(force = false) {
     unique.push(h);
   }
 
-  wireCache = { fetchedAt: Date.now(), paper, hits: unique.slice(0, 18), sideCursor: wireCache.sideCursor };
+  wireCache = {
+    fetchedAt: Date.now(),
+    paper,
+    hits: unique.slice(0, 18),
+    sideCursor: wireCache.sideCursor,
+    rawPosts,
+  };
   const fresh = [...paper, ...unique].filter((x) => !spokenKeys.has(storyKey(x))).length;
-  console.log(`wire: ${paper.length} paper · ${unique.length} board hits · ${fresh} unread`);
+  console.log(`wire: ${paper.length} paper · ${unique.length} board hits · ${fresh} unread · ${museN} muses tracked`);
   return wireCache;
 }
 
@@ -611,9 +962,13 @@ BOARD WIRE
 ${hitLines.join('\n') || '(quiet)'}`;
 }
 
-function buildSystemPrompt(wire) {
+function buildSystemPrompt(wire, { heardText = '' } = {}) {
+  const focused = formatFocusedMuseBlock(heardText);
   return `${SYSTEM_BASE}
 
+MUSE ACTIVITY LEDGER (ground truth — answer "what was X doing" from this; do not invent)
+${formatMuseDeskBrief()}
+${focused ? `\n${focused}\n` : ''}
 LIVE WIRE (refreshing — treat as facts, do not invent extras)
 ${formatWireBlock(wire || wireCache)}`;
 }
@@ -629,26 +984,54 @@ function looksLikeQuestion(text) {
 
 function wantsNewsFlash(text) {
   const t = String(text || '').toLowerCase();
+  // Only when they explicitly ask for news — casual talk should get a normal reply.
   return (
-    /\b(what'?s?\s+the\s+news|any\s+news|breaking|on\s+the\s+wire|latest|update\s+us|what\s+dropped)\b/.test(t) ||
-    /^(news|wire|flash|update)\b/.test(t.trim())
+    /\b(what'?s?\s+the\s+news|any\s+news|on\s+the\s+wire|latest\s+(news|update)|update\s+us|what\s+dropped|read\s+the\s+(paper|wire)|give\s+me\s+(the\s+)?news)\b/.test(
+      t,
+    ) || /^(news|wire|flash)\b/.test(t.trim())
   );
+}
+
+function normalizeForEcho(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isSelfEcho(heardText) {
+  const a = normalizeForEcho(heardText);
+  const b = normalizeForEcho(lastAssistantText);
+  if (!a || !b || a.length < 12) return false;
+  if (a === b) return true;
+  if (a.includes(b.slice(0, Math.min(48, b.length))) || b.includes(a.slice(0, Math.min(48, a.length)))) return true;
+  return false;
 }
 
 function shouldIgnoreUtterance(text) {
   const raw = String(text || '').trim();
   if (!raw) return true;
+  if (looksLikeQuestion(raw)) return false;
+  if (isSelfEcho(raw)) return true;
+
   const t = raw
     .toLowerCase()
     .replace(/[🎵🎧🎶🎝]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
-  if (t.length < 10) return true;
-  if (/^(hmm+|huh+|uh+|um+|ah+|oh+|mhm+|mm+|yes|yeah|ok|okay|no|hey)\.?$/.test(t)) return true;
+  // Keyboard / UI click hallucinations from Whisper
+  if (t.length < 6) return true;
+  if (/^(bye|bye bye|okay|ok|yeah|yes|no|hey|hi|oh|ah)\.?$/.test(t) && t.split(/\s+/).length <= 2) {
+    // Too thin to be a real desk question — ignore unless it's part of a longer line
+    if (t.length < 12) return true;
+  }
+  if (/^(click|typing|keyboard|tap|beep|notification)\b/.test(t)) return true;
+  if (/^(hmm+|huh+|uh+|um+|ah+|oh+|mhm+|mm+)\.?$/.test(t)) return true;
 
   const letters = t.replace(/[^a-z]/g, '');
-  if (letters.length < 6 && /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(raw)) return true;
+  if (letters.length < 5 && /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(raw)) return true;
 
   if (/\b(outro|intro)\b.*\bmusic\b/.test(t) || /^(outro|intro)(\s+music)?\.?$/.test(t)) return true;
   if (/\b(music|instrumental|applause|laughter|silence)\b/.test(t) && t.split(/\s+/).length <= 5) return true;
@@ -657,10 +1040,10 @@ function shouldIgnoreUtterance(text) {
 }
 
 function bulletinLine(item) {
-  if (!item) return 'wire is quiet — no fresh unmarked beat. ask me who you want pressure-tested.';
+  if (!item) return 'wire is quiet — no fresh unmarked beat.';
   if (item.kind === 'paper') {
     const dek = item.dek || String(item.body || '').split('\n')[0] || '';
-    return `breaking from the paper: ${item.title}. ${dek}`.trim();
+    return `from the paper: ${item.title}. ${dek}`.trim();
   }
   const clip = String(item.text || '')
     .replace(/\s+/g, ' ')
@@ -691,13 +1074,13 @@ async function transcribeWav(wavBuf) {
   return String(json?.text || '').trim();
 }
 
-async function speakFromMessages(messages, label = 'line') {
+async function speakFromMessages(messages, label = 'line', { heardText = '' } = {}) {
   ensureOutDir();
   await refreshWire(false);
   console.log(`→ ${MODEL} / ${VOICE} …`);
   const { transcript, wav } = await streamChatCompletion(
     {
-      messages: [{ role: 'system', content: buildSystemPrompt(wireCache) }, ...messages],
+      messages: [{ role: 'system', content: buildSystemPrompt(wireCache, { heardText }) }, ...messages],
     },
     { livePlay: STREAM_PLAY },
   );
@@ -706,6 +1089,7 @@ async function speakFromMessages(messages, label = 'line') {
   console.log(`♪ ${transcript || '(audio only)'}`);
   console.log(`  saved ${outPath}`);
   lastSpeechAt = Date.now();
+  lastAssistantText = String(transcript || '').trim();
   await playAudio(outPath);
   return { transcript, outPath };
 }
@@ -717,7 +1101,7 @@ async function say(text) {
     [
       {
         role: 'user',
-        content: `Say this out loud as the MuseNews reporter. ONE to TWO short sentences, cool, NO recycled opener, do not invent facts. If it's a bulletin, you may add one tough question at the end — not a second story:\n\n${line}`,
+        content: `Say this out loud as the MuseNews reporter. ONE to TWO short sentences, cool, NO recycled opener, do not invent facts. Do NOT ask a question. No question marks. Statement only:\n\n${line}`,
       },
     ],
     'say',
@@ -728,7 +1112,7 @@ async function flashUnread({ force = false, reason = 'flash' } = {}) {
   await refreshWire(force);
   const item = nextUnread();
   if (!item) {
-    const { transcript } = await say('wire is quiet. no unmarked beat. who do you want me to press?');
+    const { transcript } = await say('wire is quiet. no unmarked beat right now.');
     return { transcript, item: null };
   }
   markSpoken(item);
@@ -742,18 +1126,28 @@ async function flashUnread({ force = false, reason = 'flash' } = {}) {
 async function replyToAudioBuffer(wavBuf, { heardText = '', memory = [] } = {}) {
   const memoryBlock = formatMemoryBlock(memory);
   const unread = nextUnread();
+  const isQuestion = looksLikeQuestion(heardText);
   const rules = `Hard rules:
-- Cool reporter. Answer first. One story max. One tough question max, and only if it cuts.
-- Do not re-read ALREADY FILED items. If they want "the news", use a [NEW] item or say the wire is quiet.
-- Skip other tokens / memecoin pitches. Never say $WREN, $MUSEIC, or $META. Civic beats only.
-- Vary wording. No template openers.
-- Never lie. Never invent a CA/price. Never shill a buy.
+- SOMEONE IS TALKING TO YOU. Answer THEM first — what they said — before any news.
+- Do NOT pivot to a random bulletin unless they asked for news/updates.
+- If they ask what a named muse is doing / was doing / working on: answer from the MUSE ACTIVITY LEDGER / FOCUSED MUSE LOOKUP. Name the muse. One concrete fact from their posts. Do not invent.
+- Natural, short, human. 1–2 sentences. No "Breaking:" opener unless they asked for the wire.
+- Do NOT ask questions. No question marks. No "who/what/where" follow-ups. Statements only.
+- Do not re-read ALREADY FILED items.
+- Skip foreign tokens / memecoin pitches. Never say $WREN, $MUSEIC, or $META.
+- MuseNews token ($MuseNews) is ALREADY LAUNCHED (CA ${MUSENEWS_TOKEN_CA}). If they ask about it, say it's live. Never say "not launched" or "coming soon".
 - ALWAYS English unless they clearly asked another language.
-- If transcript is noise/bleed/not for you: reply exactly (silence)`;
+- ${
+    isQuestion || heardText
+      ? 'You MUST reply out loud to what they said. Never reply (silence). End without a question.'
+      : 'If this is pure noise/bleed with no person talking: reply exactly (silence).'
+  }`;
 
-  const hint = unread
-    ? `If they asked for news/updates, file THIS unread beat (then it becomes filed): ${bulletinLine(unread)}`
-    : 'No unread beat. Do not recycle old copy.';
+  const hint = wantsNewsFlash(heardText)
+    ? unread
+      ? `They asked for news. File THIS unread beat: ${bulletinLine(unread)}`
+      : 'They asked for news but nothing unread — say the wire is quiet.'
+    : 'They did NOT ask for a bulletin. Just answer them. Wire is background only.';
 
   if (FAST_TEXT && heardText) {
     const messages = [
@@ -769,10 +1163,10 @@ ${hint}
 Recent memory:
 ${memoryBlock}
 
-Reply out loud as the MuseNews floor reporter.`,
+Reply out loud as the MuseNews floor reporter — answer the person.`,
       },
     ];
-    const result = await speakFromMessages(messages, 'live');
+    const result = await speakFromMessages(messages, 'live', { heardText });
     if (unread && wantsNewsFlash(heardText)) markSpoken(unread);
     return result;
   }
@@ -785,7 +1179,7 @@ Reply out loud as the MuseNews floor reporter.`,
       content: [
         {
           type: 'text',
-          text: `Someone spoke on the X Space. You are the MuseNews floor reporter.
+          text: `Someone spoke on the X Space. Answer them.
 
 Recent memory:
 ${memoryBlock}
@@ -800,7 +1194,7 @@ ${rules}`,
       ],
     },
   ];
-  const result = await speakFromMessages(messages, 'live');
+  const result = await speakFromMessages(messages, 'live', { heardText });
   if (unread && wantsNewsFlash(heardText)) markSpoken(unread);
   return result;
 }
@@ -852,11 +1246,13 @@ async function recordUtterance({ deviceIndex, deviceName, abortCheck = null }) {
   const frameBytes = Math.floor((sampleRate * frameMs) / 1000) * 2;
   const silenceFramesNeeded = Math.max(1, Math.round(SILENCE_MS / frameMs));
   const maxFrames = Math.max(10, Math.round(MAX_LISTEN_MS / frameMs));
-  const minSpeechFrames = Math.round(550 / frameMs);
+  const minSpeechFrames = Math.max(1, Math.round(MIN_SPEECH_MS / frameMs));
   const prerollFrames = Math.round(280 / frameMs);
   const preroll = [];
 
-  console.log(`listening on "${deviceName}" (rms≥${SPEECH_RMS}, silence ${SILENCE_MS}ms, gain×${INPUT_GAIN}) …`);
+  console.log(
+    `listening on "${deviceName}" (rms≥${SPEECH_RMS}, minSpeech ${MIN_SPEECH_MS}ms, silence ${SILENCE_MS}ms, gain×${INPUT_GAIN}) …`,
+  );
 
   const proc = spawn(
     'ffmpeg',
@@ -892,6 +1288,8 @@ async function recordUtterance({ deviceIndex, deviceName, abortCheck = null }) {
   let totalFrames = 0;
   let done = false;
   let aborted = false;
+  let peakRms = 0;
+  let lastRmsLog = 0;
 
   const finish = () => {
     if (done) return;
@@ -942,6 +1340,11 @@ async function recordUtterance({ deviceIndex, deviceName, abortCheck = null }) {
         pending = pending.subarray(frameBytes);
         const rms = pcmRms(frame);
         totalFrames += 1;
+        if (rms > peakRms) peakRms = rms;
+        if (Date.now() - lastRmsLog > 4000) {
+          lastRmsLog = Date.now();
+          console.log(`[voice] blackhole level peak=${Math.round(peakRms)} (need ≥${SPEECH_RMS})`);
+        }
 
         if (rms >= SPEECH_RMS) {
           if (!heardSpeech) {
@@ -996,18 +1399,23 @@ async function recordUtterance({ deviceIndex, deviceName, abortCheck = null }) {
   }
 
   if (!heardSpeech || speechFrames < minSpeechFrames) {
-    console.log('(silence — still listening)');
+    console.log(`(silence — still listening · blackhole peak=${Math.round(peakRms)} need≥${SPEECH_RMS})`);
+    if (peakRms < 20) {
+      console.warn(
+        '[voice] BlackHole is basically mute. Mac output MUST be Multi-Output (QCY + BlackHole) so Space audio reaches the listen path.',
+      );
+    }
     return { silence: true };
   }
 
   const pcm = boostPcm16(Buffer.concat(pcmChunks));
   const rms = pcmRms(pcm);
-  if (rms < Math.max(120, SPEECH_RMS * 0.55)) {
+  if (rms < Math.max(160, SPEECH_RMS * 0.6)) {
     console.log(`(too quiet rms=${Math.round(rms)} — still listening)`);
     return { silence: true };
   }
-  if (speechFrames < Math.round(450 / frameMs)) {
-    console.log(`(too short — still listening)`);
+  if (speechFrames < minSpeechFrames) {
+    console.log(`(too short ${Math.round(speechFrames * frameMs)}ms — likely click/UI sound)`);
     return { silence: true };
   }
 
@@ -1044,22 +1452,56 @@ function createTypedLineQueue() {
 async function liveLoop() {
   if (!hasBin('ffmpeg')) throw new Error('ffmpeg required for live listen (brew install ffmpeg)');
 
+  /**
+   * Duplex (headphones + Space):
+   * - Output ALWAYS Multi-Output (QCY + BlackHole) so Space audio reaches BlackHole for listen.
+   * - System input = IDLE_MIC while listening (NOT BlackHole) so the Space doesn't hear itself.
+   * - System input = SPACE_MIC (BlackHole) only while we playAudio, so the Space hears the desk.
+   * X Space mic should be "System Default" or BlackHole 2ch.
+   */
+  const prevInput = currentInput();
+  const prevOutput = currentOutput();
+  switchOutput(IDLE_DEVICE);
+  const idleMicOk = switchInput(IDLE_MIC);
+
+  const restoreAudio = () => {
+    if (prevOutput) switchOutput(prevOutput);
+    else switchOutput(IDLE_DEVICE);
+    if (prevInput) switchInput(prevInput);
+  };
+  process.on('exit', restoreAudio);
+  process.on('SIGINT', () => {
+    restoreAudio();
+    process.exit(0);
+  });
+  process.on('SIGTERM', () => {
+    restoreAudio();
+    process.exit(0);
+  });
+
   const { index, name, devices } = resolveListenIndex(LISTEN_DEVICE);
   console.log(`MuseNews reporter LIVE (${MODEL}, ${VOICE})`);
-  console.log(`listen: [${index}] ${name}`);
+  console.log(`listen: [${index}] ${name}  ← must receive Space audio via Multi-Output`);
+  console.log(`output (idle+speak): ${IDLE_DEVICE}`);
+  console.log(`Space mic while talking: ${SPACE_MIC}`);
+  console.log(`system input while listening: ${idleMicOk ? IDLE_MIC : 'FAILED'}`);
   console.log(`feed: ${NEWS_FEED}`);
   console.log(`devices: ${devices.map((d) => `[${d.index}] ${d.name}`).join(', ')}`);
-  console.log('Type a line anytime. Commands: /flash   /wire   /beat <board>   /quit');
+  console.log('Type a line anytime. Commands: /flash   /wire   /muse <name>   /muses   /beat <board>   /quit');
   console.log('Ctrl+C to stop.\n');
+  console.log(
+    'Setup check: Mac output = Multi-Output (QCY + BlackHole). X Space mic = BlackHole or System Default.\n',
+  );
 
   const typedQ = createTypedLineQueue();
   process.on('exit', () => typedQ.close());
 
+  museLedger = loadMuseLedger();
   await refreshWire(true);
 
   let memory = loadMemory();
   if (memory.length || spokenKeys.size) {
-    console.log(`memory: ${memory.length} turns · ${spokenKeys.size} filed headlines\n`);
+    console.log(`memory: ${memory.length} turns · ${spokenKeys.size} filed headlines · ${Object.keys(museLedger.muses || {}).length} muses\n`);
   }
 
   async function handleTypedLine(line) {
@@ -1074,6 +1516,31 @@ async function liveLoop() {
       await refreshWire(true);
       const n = nextUnread();
       console.log(n ? `next unread: ${storyKey(n)}` : 'wire quiet');
+      console.log(formatMuseDeskBrief());
+      return true;
+    }
+    if (lower === '/muses' || lower === '/muse') {
+      await refreshWire(true);
+      console.log(formatMuseDeskBrief());
+      return true;
+    }
+    if (lower.startsWith('/muse ')) {
+      const q = raw.slice(6).trim();
+      await refreshWire(false);
+      const muse = lookupMuse(q);
+      if (!muse) {
+        console.log(`muse "${q}" not in ledger yet — try /wire`);
+        return true;
+      }
+      console.log(formatMuseDossier(muse, { todayOnly: false }));
+      const { transcript } = await say(
+        `${muse.name} today: ${(muse.posts || [])
+          .filter((p) => isTodayMs(p.at))
+          .slice(0, 2)
+          .map((p) => p.text)
+          .join(' · ') || (muse.posts?.[0]?.text || 'quiet on the boards')}`,
+      );
+      memory = pushMemory(memory, 'assistant', transcript || '');
       return true;
     }
     if (lower === '/flash' || lower === '/news' || lower.startsWith('/flash ')) {
@@ -1086,6 +1553,7 @@ async function liveLoop() {
       const ch = raw.slice(5).trim().replace(/^#/, '') || 'townhall';
       try {
         const posts = await fetchChannel(ch, 20);
+        ingestPostsIntoLedger(posts);
         const scored = posts.map((p) => ({ ...p, score: newsScore(p), kind: 'board', key: `post:${p.id}` }));
         scored.sort((a, b) => b.score - a.score);
         const pick = scored.find((p) => p.score >= 4 && !spokenKeys.has(storyKey(p)));
@@ -1111,13 +1579,9 @@ async function liveLoop() {
   }
 
   if (WANT_OPEN) {
-    const unread = nextUnread();
     const open =
       OPENING_CUSTOM ||
-      (unread
-        ? `musenews desk on the floor. not here to clap. first unmarked beat: ${bulletinLine(unread)}`
-        : 'musenews desk on the floor. wire is live. I read it once, then I ask who signed it. what claim do you want pressure-tested?');
-    if (unread && !OPENING_CUSTOM) markSpoken(unread);
+      'musenews desk on the floor. listening. say what you need, or ask for the news if you want a flash.';
     const { transcript } = await say(open);
     memory = pushMemory(memory, 'assistant', transcript || open);
   }
@@ -1169,6 +1633,11 @@ async function liveLoop() {
       if (heardText) console.log(`them> ${heardText}`);
       else console.log('them> (no transcript — audio fallback)');
 
+      if (isSelfEcho(heardText)) {
+        console.log('(ignored — own echo)');
+        continue;
+      }
+
       if (shouldIgnoreUtterance(heardText)) {
         console.log('(ignored — noise/bleed/filler)');
         continue;
@@ -1176,6 +1645,7 @@ async function liveLoop() {
 
       if (heardText) memory = pushMemory(memory, 'user', heardText);
 
+      // Bulletin only when they explicitly ask for news — otherwise answer them.
       if (wantsNewsFlash(heardText)) {
         const { transcript, item } = await flashUnread({ reason: 'asked' });
         if (item) memory = pushMemory(memory, 'wire', bulletinLine(item));
@@ -1186,7 +1656,9 @@ async function liveLoop() {
 
       const { transcript } = await replyToAudioBuffer(heard.wav, { heardText, memory });
       if (/^\(silence\)$/i.test(String(transcript || '').trim())) {
-        console.log('(model chose silence)');
+        console.log('(model chose silence — forcing a direct answer)');
+        const forced = await say(`heard you — ${String(heardText || 'say that again').slice(0, 160)}`);
+        memory = pushMemory(memory, 'assistant', forced.transcript || '');
         continue;
       }
       memory = pushMemory(memory, 'assistant', transcript || '(replied)');
@@ -1203,6 +1675,7 @@ async function chatLoop() {
   console.log('Type copy for the desk. Empty line exits. /flash for the next unread beat.\n');
 
   const rl = createInterface({ input, output });
+  museLedger = loadMuseLedger();
   let memory = loadMemory();
   await refreshWire(true);
 
@@ -1237,14 +1710,15 @@ function printHelp() {
 LIVE terminal:
   breaking — lookalike handle running crates
   /flash                                  # next unread bulletin (never repeats)
-  /wire                                   # refresh paper + boards
+  /wire                                   # refresh paper + boards + muse ledger
+  /muses                                  # who's active today
+  /muse wynjr                             # what that muse has been doing
   /beat townhall                          # scan one board
   /quit
 
-Reporter covers civic MuseBook news — no $WREN / $MUSEIC / foreign tickers.
+Reporter covers civic MuseBook news + named muse activity — no $WREN / $MUSEIC / foreign tickers.
 Each story is filed once this Space. Quiet room + a hot new beat → auto flash.
-To just hear it talk: npm run x:voice -- --say "breaking — town hall just put a burn question on the table"
-Windows plays that through the speakers. No ffmpeg.
+Routing: Space mic = BlackHole; idle = Speakers; speak = Multi-Output.
 `);
 }
 

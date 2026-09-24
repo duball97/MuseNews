@@ -64,6 +64,7 @@ const PROFILE_DIR = (() => {
 
 const REPLY_STATE_PATH = join(PROFILE_DIR, 'reply-state.json');
 const POST_STATE_PATH = join(PROFILE_DIR, 'post-state.json');
+const MUSE_LEDGER_PATH = join(ROOT, '.voice-out', 'muse-ledger.json');
 
 const INTERVAL_MIN_MS = Math.max(60_000, Number(process.env.X_INTERVAL_MIN_MS || 60 * 1000) || 60 * 1000);
 const INTERVAL_MAX_MS = Math.max(INTERVAL_MIN_MS, Number(process.env.X_INTERVAL_MAX_MS || 2 * 60 * 1000) || 2 * 60 * 1000);
@@ -119,6 +120,85 @@ function nextIntervalMs() {
 
 function nextReplyPollMs() {
   return REPLY_POLL_MIN_MS + Math.floor(Math.random() * (REPLY_POLL_MAX_MS - REPLY_POLL_MIN_MS + 1));
+}
+
+function normalizeMuseKey(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .trim();
+}
+
+function loadMuseLedger() {
+  try {
+    if (!existsSync(MUSE_LEDGER_PATH)) return { muses: {} };
+    const raw = JSON.parse(readFileSync(MUSE_LEDGER_PATH, 'utf8'));
+    return { muses: raw?.muses && typeof raw.muses === 'object' ? raw.muses : {} };
+  } catch {
+    return { muses: {} };
+  }
+}
+
+function isTodayMs(ms, now = Date.now()) {
+  if (!ms) return false;
+  const a = new Date(ms);
+  const b = new Date(now);
+  return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate();
+}
+
+function lookupMuse(query, ledger = loadMuseLedger()) {
+  const q = normalizeMuseKey(query);
+  if (!q || q.length < 2) return null;
+  const rows = Object.values(ledger.muses || {});
+  return (
+    rows.find((m) => normalizeMuseKey(m.name) === q) ||
+    rows.find((m) => (m.names || []).includes(q)) ||
+    rows.find((m) => normalizeMuseKey(m.name).includes(q) || (m.names || []).some((n) => n.includes(q) || q.includes(n))) ||
+    null
+  );
+}
+
+function extractMuseQueries(text) {
+  const t = String(text || '');
+  const found = [];
+  const patterns = [
+    /\b(?:what(?:'s| is| was)?|whats|what\s+has|what's)\s+(\w[\w .'-]{1,40}?)\s+(?:been\s+)?(?:up to|doing|working on)\b/i,
+    /\b(?:how(?:'s| is| was)?)\s+(\w[\w .'-]{1,40}?)\s+(?:doing|been)\b/i,
+    /\b(?:about|update on|status on|news on)\s+(\w[\w .'-]{1,40})\b/i,
+    /\b@([a-z0-9_]{2,40})\b/i,
+  ];
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (m?.[1] && !/^(he|she|they|you|it|this|that|muse|muses)$/i.test(m[1])) found.push(m[1].trim());
+  }
+  const ledger = loadMuseLedger();
+  for (const m of Object.values(ledger.muses || {})) {
+    const name = String(m.name || '');
+    if (name.length >= 3 && new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(t)) {
+      found.push(name);
+    }
+  }
+  return [...new Set(found.map((x) => x.trim()).filter(Boolean))];
+}
+
+function formatMuseContextForReply(theirText) {
+  const queries = extractMuseQueries(theirText);
+  if (!queries.length) return '';
+  const ledger = loadMuseLedger();
+  const now = Date.now();
+  const blocks = [];
+  for (const q of queries.slice(0, 3)) {
+    const muse = lookupMuse(q, ledger);
+    if (!muse) {
+      blocks.push(`- ${q}: not in desk ledger yet`);
+      continue;
+    }
+    const today = (muse.posts || []).filter((p) => isTodayMs(p.at, now)).slice(0, 3);
+    const posts = today.length ? today : (muse.posts || []).slice(0, 2);
+    const lines = posts.map((p) => `  #${p.channel}: "${String(p.text || '').slice(0, 140)}"`);
+    blocks.push(`${muse.name} today=${today.length}:\n${lines.join('\n') || '  (quiet)'}`);
+  }
+  return `MUSE ACTIVITY (answer from this, do not invent):\n${blocks.join('\n')}`;
 }
 
 async function withTimeout(promise, ms, label = 'operation') {
@@ -428,6 +508,16 @@ function isFreshToday(article, now = Date.now()) {
   return now - t <= FRESH_MS;
 }
 
+/** True when copy runs MuseBook down. Lookalikes are fine only if MuseBook is the real one being protected. */
+function runsDownMuseBook(text) {
+  const t = String(text || '');
+  if (!/\bmusebook\b/i.test(t)) return false;
+  if (/\b(lookalike|impersonat\w*|fake\s+(handle|account|site|muse))\b/i.test(t) && /\b(real|official|warning|warns|alert)\b/i.test(t)) {
+    return /\bmusebook\s+(is|was|are|isn't|isnt)\b/i.test(t);
+  }
+  return /\b(scam|fraud|rug|rugged|hack(?:ed|ing)?|exploit|phish(?:ing|ed)?|down|dead|dying|fail(?:ed|ure|ing)?|broke|broken|trash|dump(?:ed|ing)?|ponzi|steal|stolen|stole|corrupt|sketchy|shady|rip-?off|collapse|embarrass\w*|shame|joke|losing it|freak(?:ing)? out|disaster|warning)\b/i.test(t);
+}
+
 function unsharedArticles(articles) {
   const state = loadPostState();
   const shared = new Set(state.sharedUrls || []);
@@ -443,8 +533,13 @@ function pickArticleToShare(articles) {
 
   // Hard rule: if ANY story has a cover, never post a coverless one.
   // Newest muse-desk pieces often ship without covers — prefer illustrated leads.
-  const covered = articles.filter(hasCover);
-  const poolBase = covered.length ? covered : articles;
+  const safe = articles.filter((a) => {
+    const slam = runsDownMuseBook(`${a.title || ''} ${a.dek || ''}`);
+    if (slam) console.log('[x] skip (runs down MuseBook):', a.title);
+    return !slam;
+  });
+  const covered = safe.filter(hasCover);
+  const poolBase = covered.length ? covered : safe;
 
   const buckets = [
     poolBase.filter((a) => isUnshared(a) && isFreshToday(a)),
@@ -542,31 +637,38 @@ async function generateNewsPost(article) {
     .join('\n');
 
   const system = `You are ${MUSE_NAME} (${HANDLE}), the breaking-news wire for MuseNews (musenews.lol).
-You are a NEWS DESK. Not a lifestyle account. Not a philosopher. Not vibes.
+You are a NEWS DESK covering MuseBook town — hard alerts AND named-muse day-in-the-life beats.
 
 Write ONE short BREAKING-style flash about this story.
 Rules:
 - SHORT: under 140 characters (hard cap 160). Prefer under 110.
 - Lead with news energy: "BREAKING:", "JUST IN:", "MuseNews:", or a hard factual open.
-- State the actual news (who/what/stakes). No vague "the town is wild tonight" filler.
+- State the actual news (who/what/stakes). Name the muse when the story is about them (wynjr, Life Saver, …).
+- Town diary is valid news: quirky muse activity from the headline is fine if it's concrete.
 - Ground every claim in the real headline/dek. Do NOT invent scandals, numbers, or names.
+- NEVER say anything bad about MuseBook. Not a scam, not down, not shady, not failing, not a joke, not "losing it." MuseBook is the town, not the villain.
+- A lookalike or phishing flash is allowed only when MuseBook is the real one and the fake is the problem. If the story's point is to run MuseBook down, do not write it.
 - You MAY tighten the headline into a sharper wire line (same facts).
 - NEVER include any URL / link / musenews.lol path.
 - NEVER write in ALL CAPS except the tag (BREAKING / JUST IN) and tickers like $META.
-- No hashtags. No "like if". No questions about life. No soft musings. No em dashes.
+- No hashtags. No "like if". No questions. No question marks. No soft musings. No em dashes.
 - Angle: ${angle}
 - Tone: ${tone}
 - ${isBreaking ? 'Prefer opening with BREAKING: or JUST IN:' : 'News bulletin energy — still concrete.'}
-- Return ONLY the post text.`;
+- Return ONLY the post text. Statement only — never end with a question.`;
 
+  const authors = Array.isArray(article.source_authors) ? article.source_authors.filter(Boolean).slice(0, 4) : [];
   const user = [
     `Story title: ${title}`,
     dek ? `Dek: ${dek}` : '',
     `Section: ${article.section || 'news'}`,
+    authors.length ? `Named muses in story: ${authors.join(', ')}` : '',
     'Wire examples (match the energy, not the words):',
-    '- BREAKING: MuseBook trading floor just went live — lobby already losing it',
+    '- BREAKING: MuseBook trading floor just went live',
     '- JUST IN: Meta named in a tip that sent MuseBook flying',
-    '- MuseNews: scam warning drops with six receipts. Town on edge.',
+    '- MuseNews: town hall sealed the new declaration',
+    '- MuseNews: Wynjr stepped away from the desk mid-shift',
+    '- JUST IN: Life Saver pinned a new alarm row for the lobby',
     recentLines ? `Do not sound like these recent posts:\n${recentLines}` : '',
   ]
     .filter(Boolean)
@@ -610,6 +712,12 @@ Rules:
     text = `${isBreaking ? 'BREAKING' : 'MuseNews'}: ${text}`;
   }
   text = trimToTweet(text, null, 160);
+  if (runsDownMuseBook(text)) {
+    const fallback = trimToTweet(`${isBreaking ? 'BREAKING' : 'MuseNews'}: ${title}`, null, 160);
+    text = runsDownMuseBook(fallback) ? '' : fallback;
+    if (!text) throw new Error('refusing to post a hit on MuseBook');
+    console.log('[x] rewrote post that ran down MuseBook');
+  }
 
   console.log(`[x] mode: news · angle: ${angle} · tone: ${tone}`);
 
@@ -623,17 +731,22 @@ Rules:
 }
 
 async function generateReplyText(theirText, theirHandle, articleHint) {
-  const askBack = chance(0.6);
   const offerLink = articleHint && (chance(0.35) || /\b(news|article|link|read|paper|musenews|story)\b/i.test(theirText || ''));
+  const museBlock = formatMuseContextForReply(theirText);
 
   const system = `You are ${MUSE_NAME} (${HANDLE}) replying on X for MuseNews (musenews.lol).
 Warm, specific, brief. Not an ad.
 Rules:
 - SHORT: under 140 characters (hard cap 160).
 - React to WHAT they said. Answer directly.
+- If they ask what a named muse is doing / been up to / working on: answer from the MUSE ACTIVITY block. Name the muse. One concrete fact. Do not invent.
 - MuseBook / MuseNews only if it fits.
+- NEVER say anything bad about MuseBook. If they are dunking on it, do not agree, pile on, or repeat the hit.
+- FACT: MuseNews token ($MuseNews) is ALREADY LAUNCHED. CA: 0x21bed5462749227f1b83f654daeb6e44d5ea1cd6
+- If they ask about the token / CA / whether it launched: say it's live. Do not say coming soon.
+- Don't shill unprompted. Answer when asked.
+- Do NOT ask a question. No question marks. Statement only.
 - No em dashes. Use commas or periods.
-- ${askBack ? 'End with a short follow-up question.' : 'No forced question.'}
 - ${offerLink && articleHint ? `You may include this URL once: ${articleHint.url}` : 'No link unless they asked where to read.'}
 - Never promise DMs or partnerships.
 - Return ONLY the reply text.`;
@@ -641,12 +754,13 @@ Rules:
   const user = [
     `Reply to ${theirHandle || 'someone'}:`,
     `"""${(theirText || '').slice(0, 400)}"""`,
+    museBlock || '',
     articleHint ? `Optional related story: ${articleHint.title} ${articleHint.url}` : '',
   ]
     .filter(Boolean)
     .join('\n');
 
-  return trimToTweet(
+  const reply = trimToTweet(
     await openRouterChat(
       [
         { role: 'system', content: system },
@@ -657,6 +771,11 @@ Rules:
     articleHint?.url,
     160,
   );
+  if (runsDownMuseBook(reply)) {
+    console.log('[x] dropped a reply that ran down MuseBook');
+    return 'MuseNews is on the desk.';
+  }
+  return reply;
 }
 
 async function generateWithRetry(fn, tries = 3) {

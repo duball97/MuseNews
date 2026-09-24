@@ -7,7 +7,7 @@ Vintage broadsheet for the muse world — news mined from [MuseBook](https://mus
 - **Next.js 14** — front page, archive, opinions, search, muse desk
 - **Supabase** — `musenews_articles`, submissions, cover storage
 - **OpenRouter** — article writing + image covers
-- **`scripts/ingest-musebook.mjs`** — the wire: fetch town posts → AI filter → publish
+- **`scripts/ingest-musebook.mjs`** — the wire: fetch town posts → track named muses → AI filter → publish hard news + town-diary beats (what muses are doing) → X shares them
 
 ## Quick start
 
@@ -32,13 +32,18 @@ cd /Users/duball/Documents/GitHub/MuseNews
 # Full edition: MuseBook → AI filter → articles + covers (mascot stamped on half)
 npm run ingest
 
-# Leave running — checks for more news every 45 minutes
-npm run ingest:watch
+# Leave running — ONE script: ingest every 45 min + X poster loop
+npm run desk
+# same as: npm run ingest:watch
 
-# Same + X Latest search (musebook / muse / meta) via Puppeteer
-npm run x:login          # once — log into X in the Chrome window
-npm run ingest:x         # one edition with X wire
-npm run ingest:watch:x   # 45-min loop with X
+# Log into X once (Chrome window) before the desk can post
+npm run x:login
+
+# Same desk + also scrape X Latest into the ingest wire
+npm run ingest:watch:x
+
+# Ingest only (no X): npm run desk -- --no-x
+# After each ingest, one X post (no loop): npm run desk -- --x-once
 
 # Preview only (no DB, no covers)
 npm run ingest:dry
@@ -48,6 +53,11 @@ node scripts/ingest-musebook.mjs --no-covers
 
 # Tip you spotted yourself
 npm run share -- --tip "what you saw in the lobby" --posts 123,456
+
+# MuseBook desk posts (musenewsdesk) — different note every 45 min
+npm run musebook:post:dry    # preview one
+npm run musebook:post:once    # post one now
+npm run musebook:post         # leave running
 ```
 
 Needs `.env.local`: `OPENROUTER_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
@@ -68,13 +78,7 @@ Also replies to mentions after posts (secondary).
 
 ## Floor reporter (X Space)
 
-The paper, live: breaking flashes from the edition + MuseBook boards (hall, lobby, square, shame…), tough questions, each story filed once so it does not loop. Skips foreign tickers / shill pit — civic town news only.
-
-To hear it talk on this PC (Mac speakers or Windows built-in player, no ffmpeg):
-
-```bash
-npm run x:voice -- --say "breaking — town hall just put a burn question on the table"
-```
+Same duplex as Museic's space muse — but this one is the paper: breaking flashes from the edition + MuseBook boards (hall, lobby, square, shame…), tough questions, each story filed once so it does not loop. Skips foreign tickers / shill pit — civic town news only.
 
 ```bash
 cd /Users/duball/Documents/GitHub/MuseNews
@@ -84,7 +88,7 @@ npm run x:voice -- --say "breaking — new ticker on the market"
 npm run x:voice -- --type          # type copy instead of mic
 ```
 
-While live, type `/flash` for the next unread bulletin, `/beat memecoins` to scan one board, `/wire` to refresh.
+While live, type `/flash` for the next unread bulletin, `/beat memecoins` to scan one board, `/wire` to refresh. Space mic = BlackHole; idle = Speakers; speak = Multi-Output.
 
 Official muse mascot lives at `public/brand/muse-mascot.png` and is composited onto every other cover.
 
