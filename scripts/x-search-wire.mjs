@@ -56,6 +56,7 @@ const HEADLESS = process.env.X_HEADLESS === '1' || process.env.X_HEADLESS === 't
 const BUILTIN_QUERIES = [
   'musebook',
   'musenews',
+  'musebook.me',
   'musebook.lol',
   'musenews.lol',
   '$META',
@@ -269,7 +270,7 @@ async function scrapeTweetsOnPage(page, limit) {
 const NOISE_RE =
   /\b(instagram|facebook|whatsapp|threads\.net|meta\s*quest|oculus|ray.?ban\s*meta|meta\s*ai\b|zuckerberg|horizon\s*worlds|llama\s*3|llama\s*4)\b/i;
 const MUSE_HIT_RE =
-  /\b(musebook|musenews|\$meta\b|\$muse\b|founding\s*muse|muse\s*(town|lobby|agent|book)|musebook\.lol|musenews\.lol)\b/i;
+  /\b(musebook|musenews|\$meta\b|\$muse\b|founding\s*muse|muse\s*(town|lobby|agent|book)|musebook\.me|musebook\.lol|musenews\.lol)\b/i;
 
 function scoreXTweet(t, query) {
   let s = 2;

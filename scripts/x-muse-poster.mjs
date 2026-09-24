@@ -8,7 +8,7 @@
  *   npm run x:login
  *   npm run x:once          # reply mentions + one post
  *   npm run x:dry           # generate text only
- *   npm run x:loop          # every ~12–20 min, mention checks in between
+ *   npm run x:loop          # every ~3–6 min, mention checks in between
  *
  * Env:
  *   OPENROUTER_API_KEY
@@ -19,6 +19,7 @@
  *   X_INTERVAL_MIN_MS / X_INTERVAL_MAX_MS
  *   X_REPLY_POLL_MIN_MS / X_REPLY_POLL_MAX_MS
  *   X_MAX_REPLIES           default 4
+ *   X_NEWS_SHARE_BIAS       0–1, default 0.92 when unshared today's stories remain
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -64,11 +65,15 @@ const PROFILE_DIR = (() => {
 const REPLY_STATE_PATH = join(PROFILE_DIR, 'reply-state.json');
 const POST_STATE_PATH = join(PROFILE_DIR, 'post-state.json');
 
-const INTERVAL_MIN_MS = Math.max(60_000, Number(process.env.X_INTERVAL_MIN_MS || 12 * 60 * 1000) || 12 * 60 * 1000);
-const INTERVAL_MAX_MS = Math.max(INTERVAL_MIN_MS, Number(process.env.X_INTERVAL_MAX_MS || 20 * 60 * 1000) || 20 * 60 * 1000);
-const REPLY_POLL_MIN_MS = Math.max(60_000, Number(process.env.X_REPLY_POLL_MIN_MS || 2.5 * 60 * 1000) || 2.5 * 60 * 1000);
-const REPLY_POLL_MAX_MS = Math.max(REPLY_POLL_MIN_MS, Number(process.env.X_REPLY_POLL_MAX_MS || 4.5 * 60 * 1000) || 4.5 * 60 * 1000);
+const INTERVAL_MIN_MS = Math.max(60_000, Number(process.env.X_INTERVAL_MIN_MS || 3 * 60 * 1000) || 3 * 60 * 1000);
+const INTERVAL_MAX_MS = Math.max(INTERVAL_MIN_MS, Number(process.env.X_INTERVAL_MAX_MS || 6 * 60 * 1000) || 6 * 60 * 1000);
+const REPLY_POLL_MIN_MS = Math.max(60_000, Number(process.env.X_REPLY_POLL_MIN_MS || 2 * 60 * 1000) || 2 * 60 * 1000);
+const REPLY_POLL_MAX_MS = Math.max(REPLY_POLL_MIN_MS, Number(process.env.X_REPLY_POLL_MAX_MS || 3.5 * 60 * 1000) || 3.5 * 60 * 1000);
 const MAX_REPLIES = Math.max(1, Number(process.env.X_MAX_REPLIES || 4) || 4);
+const NEWS_SHARE_BIAS = Math.min(1, Math.max(0, Number(process.env.X_NEWS_SHARE_BIAS || 0.92) || 0.92));
+const FEED_LIMIT = Math.max(10, Math.min(30, Number(process.env.X_FEED_LIMIT || 30) || 30));
+/** Prefer stories published within this window (ms). Default: calendar day ~36h so "today" survives timezone skew. */
+const FRESH_MS = Math.max(60 * 60 * 1000, Number(process.env.X_FRESH_MS || 36 * 60 * 60 * 1000) || 36 * 60 * 60 * 1000);
 
 const MUSE_NAME = 'musenews10';
 const HANDLE = '@musenews10';
@@ -82,14 +87,14 @@ const FIXED_TEXT = FIXED_TEXT_IDX >= 0 ? process.argv[FIXED_TEXT_IDX + 1] : '';
 const NEWS_ANGLES = [
   'desk flash: drop the headline like a wire bulletin',
   'soft share: this one is moving through the town',
-  'punchy tabloid energy, then the link',
-  'one-line lede + url, no fluff',
+  'punchy tabloid energy, no link in the main post',
+  'one-line lede, no fluff, no url',
   'sound like you just filed it from the lobby',
-  'curiosity gap in the headline, then send them to the paper',
+  'curiosity gap in the headline, leave them wanting the paper',
 ];
 
 const PROJECT_ANGLES = [
-  'MuseNews is the broadsheet for the muse world, musebook.lol town wire into print',
+  'MuseNews is the broadsheet for the muse world, musebook.me town wire into print',
   'we print what the lobby is already saying, for muses and humans',
   'musebook channels to AI desk to covers to musenews.lol',
   'agents can fetch the feed or file a column on the muse desk',
@@ -281,7 +286,7 @@ async function openRouterChat(messages, { temperature = 0.95, max_tokens = 800 }
   return text;
 }
 
-async function fetchEdition({ limit = 12 } = {}) {
+async function fetchEdition({ limit = FEED_LIMIT } = {}) {
   try {
     const res = await fetch(`${FEED}?limit=${limit}`, { cache: 'no-store' });
     const data = await res.json().catch(() => ({}));
@@ -293,26 +298,51 @@ async function fetchEdition({ limit = 12 } = {}) {
   }
 }
 
-function pickArticleToShare(articles) {
+function publishedMs(article) {
+  const t = Date.parse(String(article?.published_at || ''));
+  return Number.isFinite(t) ? t : 0;
+}
+
+function isFreshToday(article, now = Date.now()) {
+  const t = publishedMs(article);
+  if (!t) return false;
+  return now - t <= FRESH_MS;
+}
+
+function unsharedArticles(articles) {
   const state = loadPostState();
   const shared = new Set(state.sharedUrls || []);
-  const fresh = articles.filter((a) => !shared.has(a.url));
-  const pool = fresh.length ? fresh : articles;
+  return articles.filter((a) => a?.url && !shared.has(a.url));
+}
+
+function pickArticleToShare(articles) {
+  const freshUnshared = unsharedArticles(articles).filter((a) => isFreshToday(a));
+  const anyUnshared = unsharedArticles(articles);
+  const pool = freshUnshared.length ? freshUnshared : anyUnshared.length ? anyUnshared : articles;
   if (!pool.length) return null;
-  // Prefer breaking, then high importance if present, else newest-first list order
+  // Newest first, then breaking over news over opinion
   const ranked = [...pool].sort((a, b) => {
+    const byTime = publishedMs(b) - publishedMs(a);
+    if (byTime) return byTime;
     const rank = (x) => (x.section === 'breaking' ? 3 : x.section === 'news' ? 2 : 1);
     return rank(b) - rank(a);
   });
   return ranked[0];
 }
 
-function pickPostMode() {
+/** Prefer news when today's edition still has unshared stories. */
+function pickPostMode(articles = []) {
+  const todayLeft = unsharedArticles(articles).filter((a) => isFreshToday(a));
+  if (todayLeft.length) {
+    if (Math.random() < NEWS_SHARE_BIAS) return 'news';
+  } else if (unsharedArticles(articles).length) {
+    if (Math.random() < 0.75) return 'news';
+  }
   const roll = Math.random();
-  // ~38% news share, ~20% project/ecosystem, ~25% question, ~17% thought
-  if (roll < 0.38) return 'news';
-  if (roll < 0.58) return 'project';
-  if (roll < 0.83) return 'question';
+  // Fallback mix when the queue is caught up
+  if (roll < 0.45) return 'news';
+  if (roll < 0.65) return 'project';
+  if (roll < 0.85) return 'question';
   return 'thought';
 }
 
@@ -349,11 +379,35 @@ function trimToTweet(text, preferUrl, maxLen = 160) {
   return cut(out, maxLen);
 }
 
+/** Soften shouting ALL-CAPS headlines for tweets / fallbacks. */
+function uncapsHeadline(raw) {
+  let s = String(raw || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s) return '';
+  const letters = s.replace(/[^A-Za-z]/g, '');
+  const upper = (letters.match(/[A-Z]/g) || []).length;
+  if (!(letters.length >= 4 && upper / letters.length >= 0.72)) return s;
+  const small = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'for', 'of', 'in', 'on', 'to', 'with', 'at', 'by', 'from', 'as', 'into', 'via']);
+  return s
+    .toLowerCase()
+    .split(' ')
+    .map((w, i) => {
+      if (/^\$[a-z0-9_]+$/i.test(w)) return w.toUpperCase();
+      if (/^musebook$/i.test(w)) return 'MuseBook';
+      if (/^musenews$/i.test(w)) return 'MuseNews';
+      if (/^(meta|muse|ai|x|solana)$/i.test(w)) return w.toUpperCase();
+      if (i > 0 && small.has(w)) return w;
+      return w.charAt(0).toUpperCase() + w.slice(1);
+    })
+    .join(' ');
+}
+
 async function generateNewsPost(article) {
   const postState = loadPostState();
   const angle = pickFresh(NEWS_ANGLES, postState.recentAngles);
   const tone = pickFresh(TONE_SHIFTS, postState.recentTones || []);
-  const title = String(article.title || '').replace(/\s+/g, ' ').trim();
+  const title = uncapsHeadline(String(article.title || '').replace(/\s+/g, ' ').trim());
   const dek = String(article.dek || '').replace(/\s+/g, ' ').trim();
   const url = article.url;
 
@@ -363,8 +417,9 @@ Town wire from MuseBook. Warm, sharp, brief. Not a shill bot.
 Write ONE short post sharing a real story.
 Rules:
 - Keep it SHORT: ideally under 140 characters of copy before the URL (hard cap 200 total with URL).
-- Pattern: MUSENEWS: <HEADLINE> then the URL on its own line or right after.
+- Pattern: MuseNews: <headline> then the URL on its own line or right after.
 - Use the real headline (tighten if needed, stay accurate).
+- NEVER write in ALL CAPS / CAPS LOCK. Normal sentence case or Title Case only (tickers like $META OK).
 - Include exactly one URL: ${url}
 - No second paragraph. No essay. No em dashes (use commas or periods).
 - Angle: ${angle}
@@ -377,7 +432,7 @@ Rules:
     dek ? `Dek: ${dek}` : '',
     `Section: ${article.section || 'news'}`,
     `URL: ${url}`,
-    'Example: MUSENEWS: Paypal partners with META for Muse adoption',
+    'Example: MuseNews: Paypal partners with META for Muse adoption',
   ]
     .filter(Boolean)
     .join('\n');
@@ -393,9 +448,11 @@ Rules:
   if (!/musenews\.lol|\bhttps?:\/\//i.test(text)) {
     text = `${text.replace(/\s+$/, '')} ${url}`.trim();
   }
-  if (!/^MUSENEWS:/i.test(text) && !/MUSENEWS:/i.test(text)) {
-    text = `MUSENEWS: ${title}\n${url}`;
+  if (!/^MuseNews:/i.test(text) && !/MuseNews:/i.test(text) && !/^MUSENEWS:/i.test(text)) {
+    text = `MuseNews: ${title}\n${url}`;
   }
+  // Soften accidental ALL CAPS in the tweet body (keep URL as-is)
+  text = text.replace(/^((?:MuseNews|MUSENEWS):\s*)([^\n]+)/i, (_, prefix, headline) => `${prefix.replace(/MUSENEWS/i, 'MuseNews')}${uncapsHeadline(headline)}`);
 
   text = trimToTweet(text, url, 200);
   savePostState({
@@ -430,12 +487,13 @@ async function generateTalkPost(mode) {
       : `One short thought about town news or the paper. Not a promo.`;
 
   const system = `You are ${MUSE_NAME} (${HANDLE}), MuseNews on X.
-Paper: musenews.lol. Town: musebook.lol.
+Paper: musenews.lol. Town: musebook.me.
 Short, punchy, human. No essays.
 
 Rules:
 - SHORT: under 140 characters (hard cap 160).
 - One or two short sentences max.
+- NEVER write in ALL CAPS / CAPS LOCK (tickers like $META OK).
 - No em dashes. Use commas or periods.
 - Angle: ${angle}
 - Tone: ${tone}
@@ -767,13 +825,21 @@ async function runCycle(page) {
 
   let text = FIXED_TEXT;
   if (!text) {
-    const mode = pickPostMode();
+    const articles = await fetchEdition({ limit: FEED_LIMIT });
+    const todayLeft = unsharedArticles(articles).filter((a) => isFreshToday(a));
+    const unshared = unsharedArticles(articles);
+    console.log(
+      `[x] edition: ${articles.length} stories · unshared=${unshared.length} · today-unshared=${todayLeft.length}`,
+    );
+    const mode = pickPostMode(articles);
     console.log('[x] generating with', MODEL, `· mode=${mode}`);
     if (mode === 'news') {
-      const articles = await fetchEdition({ limit: 15 });
       const article = pickArticleToShare(articles);
       if (article) {
-        console.log('[x] sharing:', article.title, article.url);
+        const ageH = publishedMs(article)
+          ? Math.round((Date.now() - publishedMs(article)) / 3_600_000)
+          : '?';
+        console.log(`[x] sharing (${ageH}h old):`, article.title, article.url);
         text = await generateWithRetry(() => generateNewsPost(article));
       } else {
         console.log('[x] no articles — falling back to project talk');

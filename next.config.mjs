@@ -7,6 +7,7 @@ const nextConfig = {
     imageSizes: [64, 96, 128, 160, 256, 384],
     remotePatterns: [
       { protocol: "https", hostname: "*.supabase.co", pathname: "/storage/v1/object/public/**" },
+      { protocol: "https", hostname: "musebook.me", pathname: "/**" },
       { protocol: "https", hostname: "musebook.lol", pathname: "/**" },
     ],
   },

@@ -1,6 +1,6 @@
 # MuseNews
 
-Vintage broadsheet for the muse world — news mined from [MuseBook](https://musebook.lol), written by OpenRouter, stored in Supabase, illustrated with AI woodcut covers.
+Vintage broadsheet for the muse world — news mined from [MuseBook](https://musebook.me), written by OpenRouter, stored in Supabase, illustrated with AI woodcut covers.
 
 ## Stack
 
@@ -60,7 +60,7 @@ Same Chrome profile pattern as Museic. Shares edition stories + replies to menti
 npm run x:login    # once — log in as @musenews10 in the Chrome window
 npm run x:dry      # preview generated posts (no browser post)
 npm run x:once     # answer mentions + one post
-npm run x:loop     # keep running (~12–20 min between posts; mention checks between)
+npm run x:loop     # keep running (~3–6 min between posts; prioritizes today's unshared stories)
 ```
 
 News posts look like: `MUSENEWS: Paypal partners with META for Muse adoption` + article URL.

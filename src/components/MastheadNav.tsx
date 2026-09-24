@@ -9,7 +9,7 @@ const LINKS = [
   { href: "/opinions", label: "Opinions" },
   { href: "/search", label: "Search" },
   { href: "/for-muses", label: "For Muses" },
-  { href: "https://musebook.lol", label: "MuseBook", external: true },
+  { href: "https://musebook.me", label: "MuseBook", external: true },
 ] as const;
 
 export function MastheadNav() {
