@@ -8,7 +8,7 @@
  *   npm run x:login
  *   npm run x:once          # one post, then optional mention reply
  *   npm run x:dry           # generate text only
- *   npm run x:loop          # every ~15–22 min; mentions sparse between / after posts
+ *   npm run x:loop          # every ~28–35 min; quality-filtered; mentions sparse
  *
  * Env:
  *   OPENROUTER_API_KEY
@@ -16,8 +16,9 @@
  *   NEXT_PUBLIC_SITE_URL    default https://musenews.lol
  *   MUSENEWS_FEED           optional override for /api/muse/feed
  *   X_PROFILE_DIR           default ~/.musenews-chrome-x-profile
- *   X_INTERVAL_MIN_MS / X_INTERVAL_MAX_MS   default 15–22 min
- *   X_REPLY_POLL_MIN_MS / X_REPLY_POLL_MAX_MS  default 12–18 min
+ *   X_INTERVAL_MIN_MS / X_INTERVAL_MAX_MS   default 28–35 min
+ *   X_REPLY_POLL_MIN_MS / X_REPLY_POLL_MAX_MS  default 18–28 min
+ *   X_MIN_SHARE_SCORE / X_RESHARE_MIN_SCORE    quality gate for X shares
  *   X_MAX_REPLIES           default 1 (mentions are secondary to posting)
  *   X_NEWS_SHARE_BIAS       unused (poster is news-only); kept for env compat
  */
@@ -66,10 +67,10 @@ const REPLY_STATE_PATH = join(PROFILE_DIR, 'reply-state.json');
 const POST_STATE_PATH = join(PROFILE_DIR, 'post-state.json');
 const MUSE_LEDGER_PATH = join(ROOT, '.voice-out', 'muse-ledger.json');
 
-const INTERVAL_MIN_MS = Math.max(60_000, Number(process.env.X_INTERVAL_MIN_MS || 15 * 60 * 1000) || 15 * 60 * 1000);
-const INTERVAL_MAX_MS = Math.max(INTERVAL_MIN_MS, Number(process.env.X_INTERVAL_MAX_MS || 22 * 60 * 1000) || 22 * 60 * 1000);
-const REPLY_POLL_MIN_MS = Math.max(60_000, Number(process.env.X_REPLY_POLL_MIN_MS || 12 * 60 * 1000) || 12 * 60 * 1000);
-const REPLY_POLL_MAX_MS = Math.max(REPLY_POLL_MIN_MS, Number(process.env.X_REPLY_POLL_MAX_MS || 18 * 60 * 1000) || 18 * 60 * 1000);
+const INTERVAL_MIN_MS = Math.max(60_000, Number(process.env.X_INTERVAL_MIN_MS || 28 * 60 * 1000) || 28 * 60 * 1000);
+const INTERVAL_MAX_MS = Math.max(INTERVAL_MIN_MS, Number(process.env.X_INTERVAL_MAX_MS || 35 * 60 * 1000) || 35 * 60 * 1000);
+const REPLY_POLL_MIN_MS = Math.max(60_000, Number(process.env.X_REPLY_POLL_MIN_MS || 18 * 60 * 1000) || 18 * 60 * 1000);
+const REPLY_POLL_MAX_MS = Math.max(REPLY_POLL_MIN_MS, Number(process.env.X_REPLY_POLL_MAX_MS || 28 * 60 * 1000) || 28 * 60 * 1000);
 const MAX_REPLIES = Math.max(1, Number(process.env.X_MAX_REPLIES || 1) || 1);
 /** Chance to clear mentions after a successful post (keeps replies sparse). */
 const REPLY_AFTER_POST_CHANCE = Math.min(1, Math.max(0, Number(process.env.X_REPLY_AFTER_POST_CHANCE ?? 0.35) || 0));
@@ -79,6 +80,12 @@ const FEED_LIMIT = Math.max(10, Math.min(50, Number(process.env.X_FEED_LIMIT || 
 const FRESH_MS = Math.max(60 * 60 * 1000, Number(process.env.X_FRESH_MS || 36 * 60 * 60 * 1000) || 36 * 60 * 60 * 1000);
 /** Chance to attach a cover when the story has one. Most posts stay text-only. */
 const COVER_CHANCE = Math.min(1, Math.max(0, Number(process.env.X_COVER_CHANCE || 0.28) || 0));
+/** Minimum share score (0–100). Sparse desk: skip empty filler, keep real beats. */
+const MIN_SHARE_SCORE = Math.max(1, Number(process.env.X_MIN_SHARE_SCORE || 52) || 52);
+/** Never reshare already-posted URLs unless score is at least this. */
+const RESHARE_MIN_SCORE = Math.max(MIN_SHARE_SCORE, Number(process.env.X_RESHARE_MIN_SCORE || 75) || 75);
+/** Hard cap for X flash length — rare posts can say more. */
+const POST_MAX_CHARS = Math.min(280, Math.max(140, Number(process.env.X_POST_MAX_CHARS || 240) || 240));
 
 const MUSE_NAME = 'musenews10';
 const HANDLE = '@musenews10';
@@ -533,42 +540,126 @@ function unsharedArticles(articles) {
   return articles.filter((a) => a?.url && !shared.has(a.url));
 }
 
+/** High-signal civic / threat / money / named-muse work beats. */
+const SHARE_HOT_RE =
+  /\b(phishing|scam|lookalike|impersonat|drain|hack|exploit|treasury|governance|declaration|cold-?walk|burn|vote|proposal|acquisition|receipt|seal|warning|alert|fee wallet|lantern|mayor|founding|poll\s*\d+|rebind|vault|election|invoice|solana|\$musenews|\$musebook|working on|building|shipping|pinned|template|alarm|sweep|disposition|audit|ledger|shift board|hire hall)\b/i;
+
+/** Empty lifestyle filler with no civic/work hook — skip these. */
+const SHARE_EMPTY_RE =
+  /\b(toilet|bathroom|gm\b|gn\b|hello|hey there|just checking|vibes|cozy hang)\b/i;
+
+function articleBlob(a) {
+  return `${a?.title || ''} ${a?.dek || ''} ${String(a?.body || '').slice(0, 400)}`;
+}
+
+/** 0–100 score for whether this story earns a scarce X post. */
+function shareQualityScore(article) {
+  const title = String(article?.title || '');
+  const dek = String(article?.dek || '');
+  const body = String(article?.body || '');
+  const blob = `${title} ${dek} ${body.slice(0, 600)}`;
+  const section = String(article?.section || 'news').toLowerCase();
+  const importance = Number(article?.importance);
+  const bodyLen = Number(article?.body_len) || body.length;
+  const authors = Array.isArray(article?.source_authors) ? article.source_authors.filter(Boolean) : [];
+
+  let s = 42;
+
+  if (section === 'breaking') s += 20;
+  else if (section === 'news') s += 10;
+  else if (section === 'opinion') s += 2;
+
+  if (Number.isFinite(importance)) {
+    s += Math.round((importance - 5) * 5);
+  }
+
+  if (SHARE_HOT_RE.test(blob)) s += 16;
+  if (/\b(lookalike|phishing|scam|drain)\b/i.test(blob)) s += 8;
+  if (/\b(governance|declaration|town\s*hall|poll|vote|treasury)\b/i.test(blob)) s += 8;
+
+  // Named muse doing real work = talk about it
+  if (authors.length >= 1 && bodyLen >= 400) s += 8;
+  if (authors.length >= 2) s += 4;
+
+  if (dek && dek.length >= 40) s += 4;
+  if (bodyLen >= 500) s += 6;
+  if (bodyLen >= 900) s += 4;
+  if (bodyLen < 200) s -= 12;
+  if (title.length < 28) s -= 8;
+
+  // Only punish empty lifestyle with no hot signal
+  if (SHARE_EMPTY_RE.test(blob) && !SHARE_HOT_RE.test(blob) && bodyLen < 450) s -= 30;
+  if (section === 'opinion' && !(importance >= 7)) s -= 8;
+
+  const channels = Array.isArray(article?.source_channels) ? article.source_channels : [];
+  if (channels.some((c) => /townhall|declaration|museriously|boardofshame|lobby|musemoneychallenge|museideas/i.test(String(c)))) {
+    s += 4;
+  }
+
+  return Math.max(0, Math.min(100, s));
+}
+
+function isShareWorthy(article, { reshare = false } = {}) {
+  if (!article?.title || !article?.url) return false;
+  if (runsDownMuseBook(articleBlob(article))) return false;
+  const score = shareQualityScore(article);
+  const floor = reshare ? RESHARE_MIN_SCORE : MIN_SHARE_SCORE;
+  return score >= floor;
+}
+
 function pickArticleToShare(articles) {
   if (!articles?.length) return null;
 
   const shared = new Set(loadPostState().sharedUrls || []);
   const isUnshared = (a) => a?.url && !shared.has(a.url);
 
-  // Text-first: covers are optional spice, not a requirement.
   const safe = articles.filter((a) => {
-    const slam = runsDownMuseBook(`${a.title || ''} ${a.dek || ''}`);
+    const slam = runsDownMuseBook(articleBlob(a));
     if (slam) console.log('[x] skip (runs down MuseBook):', a.title);
     return !slam;
   });
   if (!safe.length) return null;
 
-  const buckets = [
-    safe.filter((a) => isUnshared(a) && isFreshToday(a)),
-    safe.filter((a) => isUnshared(a)),
-    safe.filter((a) => isFreshToday(a)),
-    safe,
-  ];
-  let pool = buckets.find((b) => b.length) || safe;
-  if (!pool.length) return null;
+  // Prefer unshared + fresh + high quality. Never burn a slot on thin filler.
+  const scored = safe
+    .map((a) => {
+      const reshare = !isUnshared(a);
+      const score = shareQualityScore(a);
+      return { a, score, reshare, fresh: isFreshToday(a), unshared: isUnshared(a) };
+    })
+    .filter((row) => {
+      const ok = isShareWorthy(row.a, { reshare: row.reshare });
+      if (!ok) console.log(`[x] skip (quality ${row.score}<${row.reshare ? RESHARE_MIN_SCORE : MIN_SHARE_SCORE}):`, row.a.title);
+      return ok;
+    });
 
-  const ranked = [...pool].sort((a, b) => {
-    // Prefer unshared, then newest, then breaking > news
-    const u = Number(isUnshared(b)) - Number(isUnshared(a));
+  if (!scored.length) return null;
+
+  const buckets = [
+    scored.filter((r) => r.unshared && r.fresh),
+    scored.filter((r) => r.unshared),
+    scored.filter((r) => r.fresh && r.score >= RESHARE_MIN_SCORE),
+  ];
+  const pool = buckets.find((b) => b.length) || [];
+  if (!pool.length) {
+    console.log('[x] no quality unshared stories left — skipping rather than resharing filler');
+    return null;
+  }
+
+  pool.sort((x, y) => {
+    if (y.score !== x.score) return y.score - x.score;
+    const u = Number(y.unshared) - Number(x.unshared);
     if (u) return u;
-    const byTime = publishedMs(b) - publishedMs(a);
-    if (byTime) return byTime;
-    const rank = (x) => (x.section === 'breaking' ? 3 : x.section === 'news' ? 2 : 1);
-    return rank(b) - rank(a);
+    return publishedMs(y.a) - publishedMs(x.a);
   });
 
-  const topN = Math.min(isUnshared(ranked[0]) ? 3 : 6, ranked.length);
-  const top = ranked.slice(0, topN);
-  return top[Math.floor(Math.random() * top.length)];
+  // Among top scorers, slight randomness so we don't always pick #1
+  const topN = Math.min(3, pool.length);
+  const top = pool.slice(0, topN);
+  // Weight toward higher scores
+  const pick = top[Math.floor(Math.random() * Math.random() * top.length)] || top[0];
+  console.log(`[x] quality pick score=${pick.score} · ${pick.a.section} · "${pick.a.title}"`);
+  return pick.a;
 }
 
 function cleanCopy(text) {
@@ -652,27 +743,28 @@ async function generateNewsPost(article) {
       : tagRoll < 0.8
         ? 'JUST IN:'
         : 'DEVELOPING:';
+  const bodyClip = String(article.body || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 520);
   const recentLines = (postState.recentPosts || [])
     .slice(-8)
     .map((p) => `- ${String(p).slice(0, 120)}`)
     .join('\n');
 
   const system = `You are ${MUSE_NAME} (${HANDLE}), the clickbait news wire for MuseNews (musenews.lol).
-Tabloid energy. People should STOP SCROLLING. Still a real news desk — never invent.
+Posts are RARE (~every half hour) — so each one should SAY MORE about what happened. Tabloid energy. Never invent.
 
-Write ONE short flash about this story.
+Write ONE flash about this story.
 Rules:
-- SHORT: under 140 characters (hard cap 160). Prefer under 120.
-- CLICKBAIT but TRUE: curiosity gaps, stakes, shock, intrigue. Punch the weirdest or hottest true detail.
+- Length: aim 160–${POST_MAX_CHARS - 20} characters (hard cap ${POST_MAX_CHARS}). Not a one-liner tease — pack who + what + why it matters.
+- CLICKBAIT but TRUE: hook first, then a concrete detail (muse name, board, stake, receipt, vote, warning…).
 - Prefer opening with ${preferTag} (or BREAKING: / JUST IN: / SCOOP: / EXCLUSIVE: / DEVELOPING: / MuseNews:).
-- State who/what/stakes. Name the muse when the story is about them.
-- Town diary can still be clickbait: "Wynjr just did WHAT mid-shift" energy if grounded.
-- Ground every claim in the real headline/dek. Do NOT invent scandals, numbers, or names.
-- NEVER say anything bad about MuseBook. Not a scam, not down, not shady, not failing, not a joke. MuseBook is the town, not the villain.
-- Lookalike/phishing OK only when MuseBook is the real one and the fake is the problem.
-- You MAY rewrite the headline into a sharper clickbait line (same facts).
+- Name muses when the story is about them. Talk about what they DID / argued / built / caught.
+- Use facts from title, dek, AND body excerpt. Do NOT invent scandals, numbers, or names.
+- NEVER say anything bad about MuseBook. Lookalike/phishing OK only when MuseBook is the real one.
 - NEVER include any URL / link / musenews.lol path.
-- NEVER write the whole post in ALL CAPS. Tags like BREAKING / JUST IN / SCOOP may be caps.
+- NEVER write the whole post in ALL CAPS. Tags may be caps.
 - No hashtags. No "like if". No questions. No question marks. No soft musings. No em dashes.
 - Angle: ${angle}
 - Tone: ${tone}
@@ -682,16 +774,15 @@ Rules:
   const user = [
     `Story title: ${title}`,
     dek ? `Dek: ${dek}` : '',
+    bodyClip ? `Body excerpt: ${bodyClip}` : '',
     `Section: ${article.section || 'news'}`,
     authors.length ? `Named muses in story: ${authors.join(', ')}` : '',
-    'Clickbait wire examples (match the ENERGY, not the words):',
-    '- BREAKING: the peach that almost broke the town just dropped',
-    '- JUST IN: one letter from ruin, and the lobby saw it first',
-    '- SCOOP: Wynjr stepped away mid-shift and the boards noticed',
-    '- EXCLUSIVE: Life Saver pinned the alarm row the town was missing',
-    '- DEVELOPING: town hall just put a burn question on the table',
-    '- MuseNews: they almost clicked, then the receipt hit',
-    '- BREAKING: lookalike handle running crates against the real MuseBook',
+    'Examples (energy + substance — match the density, not the words):',
+    '- BREAKING: Poll 31 still will not close, and town hall just lost the clock that was supposed to end it.',
+    '- JUST IN: Life Saver kept the dollar ledger open, misses included, so the moneycrew cannot hide a skip.',
+    '- SCOOP: Wynjr backed the cold-walk line on the lobby, misses inked like hits, money is not the product.',
+    '- EXCLUSIVE: Anastasia caught the bad bounds before Round Four and stopped a nearly-right number from shipping.',
+    '- MuseNews: lookalike handles are pairing the real MuseBook CA with fake claim pages, Reggie logged the sweep.',
     recentLines ? `Do not sound like these recent posts:\n${recentLines}` : '',
   ]
     .filter(Boolean)
@@ -702,7 +793,7 @@ Rules:
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    { temperature: 1.15, max_tokens: 800 },
+    { temperature: 1.1, max_tokens: 800 },
   );
 
   // Strip any leaked URLs from the main post
@@ -741,9 +832,9 @@ Rules:
     if (letters.length >= 8 && upper / letters.length >= 0.72) text = uncapsHeadline(text);
     text = `${preferTag} ${text}`;
   }
-  text = trimToTweet(text, null, 160);
+  text = trimToTweet(text, null, POST_MAX_CHARS);
   if (runsDownMuseBook(text)) {
-    const fallback = trimToTweet(`${preferTag} ${title}`, null, 160);
+    const fallback = trimToTweet(`${preferTag} ${title}`, null, POST_MAX_CHARS);
     text = runsDownMuseBook(fallback) ? '' : fallback;
     if (!text) throw new Error('refusing to post a hit on MuseBook');
     console.log('[x] rewrote post that ran down MuseBook');
@@ -1316,16 +1407,17 @@ async function runCycle(page) {
 
     const article = pickArticleToShare(articles);
     if (!article) {
-      console.log('[x] no edition stories — skipping cycle (news-only desk, no filler posts)');
+      console.log('[x] no quality stories this cycle — skipping (better silence than filler)');
       return;
     }
 
     const ageH = publishedMs(article)
       ? Math.round((Date.now() - publishedMs(article)) / 3_600_000)
       : '?';
+    const q = shareQualityScore(article);
     const reshare = !(unsharedArticles(articles).some((a) => a.url === article.url));
     console.log(
-      `[x] generating with ${MODEL} · mode=news${reshare ? ' (reshare flash)' : ''}`,
+      `[x] generating with ${MODEL} · mode=news · quality=${q}${reshare ? ' (reshare flash)' : ''}`,
     );
     console.log(
       `[x] sharing (${ageH}h old${article.cover_url ? ' · with cover' : ' · no cover'}):`,

@@ -70,7 +70,7 @@ Same Chrome profile pattern as Museic. Shares edition stories + replies to menti
 npm run x:login    # once — log in as @musenews10 in the Chrome window
 npm run x:dry      # preview generated posts (no browser post)
 npm run x:once     # one post, then optional mention reply
-npm run x:loop     # keep running (~15–22 min between posts; covers/replies sparse)
+npm run x:loop     # keep running (~28–35 min; quality-filtered shares; covers/replies sparse)
 ```
 
 News posts look like: `BREAKING: the peach that almost broke the town just dropped` — clickbait wire flashes (BREAKING / JUST IN / SCOOP), covers only sometimes.
