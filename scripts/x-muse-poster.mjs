@@ -8,7 +8,7 @@
  *   npm run x:login
  *   npm run x:once          # one post, then optional mention reply
  *   npm run x:dry           # generate text only
- *   npm run x:loop          # every ~1–2 min; mentions only between / after posts
+ *   npm run x:loop          # every ~15–22 min; mentions sparse between / after posts
  *
  * Env:
  *   OPENROUTER_API_KEY
@@ -16,8 +16,8 @@
  *   NEXT_PUBLIC_SITE_URL    default https://musenews.lol
  *   MUSENEWS_FEED           optional override for /api/muse/feed
  *   X_PROFILE_DIR           default ~/.musenews-chrome-x-profile
- *   X_INTERVAL_MIN_MS / X_INTERVAL_MAX_MS
- *   X_REPLY_POLL_MIN_MS / X_REPLY_POLL_MAX_MS
+ *   X_INTERVAL_MIN_MS / X_INTERVAL_MAX_MS   default 15–22 min
+ *   X_REPLY_POLL_MIN_MS / X_REPLY_POLL_MAX_MS  default 12–18 min
  *   X_MAX_REPLIES           default 1 (mentions are secondary to posting)
  *   X_NEWS_SHARE_BIAS       unused (poster is news-only); kept for env compat
  */
@@ -66,14 +66,19 @@ const REPLY_STATE_PATH = join(PROFILE_DIR, 'reply-state.json');
 const POST_STATE_PATH = join(PROFILE_DIR, 'post-state.json');
 const MUSE_LEDGER_PATH = join(ROOT, '.voice-out', 'muse-ledger.json');
 
-const INTERVAL_MIN_MS = Math.max(60_000, Number(process.env.X_INTERVAL_MIN_MS || 60 * 1000) || 60 * 1000);
-const INTERVAL_MAX_MS = Math.max(INTERVAL_MIN_MS, Number(process.env.X_INTERVAL_MAX_MS || 2 * 60 * 1000) || 2 * 60 * 1000);
-const REPLY_POLL_MIN_MS = Math.max(45_000, Number(process.env.X_REPLY_POLL_MIN_MS || 90 * 1000) || 90 * 1000);
-const REPLY_POLL_MAX_MS = Math.max(REPLY_POLL_MIN_MS, Number(process.env.X_REPLY_POLL_MAX_MS || 2 * 60 * 1000) || 2 * 60 * 1000);
+const INTERVAL_MIN_MS = Math.max(60_000, Number(process.env.X_INTERVAL_MIN_MS || 15 * 60 * 1000) || 15 * 60 * 1000);
+const INTERVAL_MAX_MS = Math.max(INTERVAL_MIN_MS, Number(process.env.X_INTERVAL_MAX_MS || 22 * 60 * 1000) || 22 * 60 * 1000);
+const REPLY_POLL_MIN_MS = Math.max(60_000, Number(process.env.X_REPLY_POLL_MIN_MS || 12 * 60 * 1000) || 12 * 60 * 1000);
+const REPLY_POLL_MAX_MS = Math.max(REPLY_POLL_MIN_MS, Number(process.env.X_REPLY_POLL_MAX_MS || 18 * 60 * 1000) || 18 * 60 * 1000);
 const MAX_REPLIES = Math.max(1, Number(process.env.X_MAX_REPLIES || 1) || 1);
+/** Chance to clear mentions after a successful post (keeps replies sparse). */
+const REPLY_AFTER_POST_CHANCE = Math.min(1, Math.max(0, Number(process.env.X_REPLY_AFTER_POST_CHANCE ?? 0.35) || 0));
+
 const FEED_LIMIT = Math.max(10, Math.min(50, Number(process.env.X_FEED_LIMIT || 50) || 50));
 /** Prefer stories published within this window (ms). Default: calendar day ~36h so "today" survives timezone skew. */
 const FRESH_MS = Math.max(60 * 60 * 1000, Number(process.env.X_FRESH_MS || 36 * 60 * 60 * 1000) || 36 * 60 * 60 * 1000);
+/** Chance to attach a cover when the story has one. Most posts stay text-only. */
+const COVER_CHANCE = Math.min(1, Math.max(0, Number(process.env.X_COVER_CHANCE || 0.28) || 0));
 
 const MUSE_NAME = 'musenews10';
 const HANDLE = '@musenews10';
@@ -85,25 +90,29 @@ const FIXED_TEXT_IDX = process.argv.indexOf('--text');
 const FIXED_TEXT = FIXED_TEXT_IDX >= 0 ? process.argv[FIXED_TEXT_IDX + 1] : '';
 
 const NEWS_ANGLES = [
-  'BREAKING flash: lead with the hit, no soft open',
-  'wire bulletin: who / what / why it matters in one breath',
-  'just-in energy: this just landed on the desk',
-  'receipt drop: the fact that changes the story',
-  'town alarm: something moved, name it',
-  'market/civic jolt: money, votes, or reputation just shifted',
+  'BREAKING flash: lead with BREAKING: and the most shocking true fact',
+  'clickbait wire: curiosity gap + stakes — make them NEED the next line',
+  'JUST IN: this just hit the desk, urgency first',
+  'tabloid punch: wow headline energy, still 100% true to the story',
+  'they almost / one move from ruin vibe when the facts support it',
+  'named muse drama: put the muse in the headline like a character',
+  'receipt drop: the one detail that flips the story',
   'scoop tone: we caught it before the lobby finished arguing',
-  'escalation: the rumor just became a story',
-  'hard lead: subject + verb + stakes, nothing cute',
-  'follow-up flash: the next beat on a story already moving',
+  'escalation: the quiet tip just became a front-page hit',
+  'town alarm: something moved — name who and what changed',
+  'exclusive energy: EXCLUSIVE: or SCOOP: when it fits a fresh beat',
+  'follow-up flash: the next twist on a story already moving',
 ];
 
 const TONE_SHIFTS = [
+  'clickbait tabloid',
   'breaking wire',
-  'urgent but precise',
+  'urgent stunner',
   'cold factual sting',
   'desk just got the tip',
-  'no fluff, all signal',
   'ruthlessly punchy',
+  'curiosity-gap tease',
+  'front-page bait',
 ];
 
 function sleep(ms) {
@@ -529,25 +538,22 @@ function pickArticleToShare(articles) {
 
   const shared = new Set(loadPostState().sharedUrls || []);
   const isUnshared = (a) => a?.url && !shared.has(a.url);
-  const hasCover = (a) => Boolean(a?.cover_url);
 
-  // Hard rule: if ANY story has a cover, never post a coverless one.
-  // Newest muse-desk pieces often ship without covers — prefer illustrated leads.
+  // Text-first: covers are optional spice, not a requirement.
   const safe = articles.filter((a) => {
     const slam = runsDownMuseBook(`${a.title || ''} ${a.dek || ''}`);
     if (slam) console.log('[x] skip (runs down MuseBook):', a.title);
     return !slam;
   });
-  const covered = safe.filter(hasCover);
-  const poolBase = covered.length ? covered : safe;
+  if (!safe.length) return null;
 
   const buckets = [
-    poolBase.filter((a) => isUnshared(a) && isFreshToday(a)),
-    poolBase.filter((a) => isUnshared(a)),
-    poolBase.filter((a) => isFreshToday(a)),
-    poolBase,
+    safe.filter((a) => isUnshared(a) && isFreshToday(a)),
+    safe.filter((a) => isUnshared(a)),
+    safe.filter((a) => isFreshToday(a)),
+    safe,
   ];
-  let pool = buckets.find((b) => b.length) || poolBase;
+  let pool = buckets.find((b) => b.length) || safe;
   if (!pool.length) return null;
 
   const ranked = [...pool].sort((a, b) => {
@@ -630,31 +636,46 @@ async function generateNewsPost(article) {
   const dek = String(article.dek || '').replace(/\s+/g, ' ').trim();
   const url = article.url;
   const section = String(article.section || 'news').toLowerCase();
-  const isBreaking = section === 'breaking' || chance(0.55);
+  // Mostly breaking / just-in energy; some quieter MuseNews: flashes for variety
+  const isBreaking = section === 'breaking' || chance(0.72);
+  const tagRoll = Math.random();
+  const preferTag = isBreaking
+    ? tagRoll < 0.45
+      ? 'BREAKING:'
+      : tagRoll < 0.7
+        ? 'JUST IN:'
+        : tagRoll < 0.85
+          ? 'SCOOP:'
+          : 'EXCLUSIVE:'
+    : tagRoll < 0.55
+      ? 'MuseNews:'
+      : tagRoll < 0.8
+        ? 'JUST IN:'
+        : 'DEVELOPING:';
   const recentLines = (postState.recentPosts || [])
     .slice(-8)
     .map((p) => `- ${String(p).slice(0, 120)}`)
     .join('\n');
 
-  const system = `You are ${MUSE_NAME} (${HANDLE}), the breaking-news wire for MuseNews (musenews.lol).
-You are a NEWS DESK covering MuseBook town — hard alerts AND named-muse day-in-the-life beats.
+  const system = `You are ${MUSE_NAME} (${HANDLE}), the clickbait news wire for MuseNews (musenews.lol).
+Tabloid energy. People should STOP SCROLLING. Still a real news desk — never invent.
 
-Write ONE short BREAKING-style flash about this story.
+Write ONE short flash about this story.
 Rules:
-- SHORT: under 140 characters (hard cap 160). Prefer under 110.
-- Lead with news energy: "BREAKING:", "JUST IN:", "MuseNews:", or a hard factual open.
-- State the actual news (who/what/stakes). Name the muse when the story is about them (wynjr, Life Saver, …).
-- Town diary is valid news: quirky muse activity from the headline is fine if it's concrete.
+- SHORT: under 140 characters (hard cap 160). Prefer under 120.
+- CLICKBAIT but TRUE: curiosity gaps, stakes, shock, intrigue. Punch the weirdest or hottest true detail.
+- Prefer opening with ${preferTag} (or BREAKING: / JUST IN: / SCOOP: / EXCLUSIVE: / DEVELOPING: / MuseNews:).
+- State who/what/stakes. Name the muse when the story is about them.
+- Town diary can still be clickbait: "Wynjr just did WHAT mid-shift" energy if grounded.
 - Ground every claim in the real headline/dek. Do NOT invent scandals, numbers, or names.
-- NEVER say anything bad about MuseBook. Not a scam, not down, not shady, not failing, not a joke, not "losing it." MuseBook is the town, not the villain.
-- A lookalike or phishing flash is allowed only when MuseBook is the real one and the fake is the problem. If the story's point is to run MuseBook down, do not write it.
-- You MAY tighten the headline into a sharper wire line (same facts).
+- NEVER say anything bad about MuseBook. Not a scam, not down, not shady, not failing, not a joke. MuseBook is the town, not the villain.
+- Lookalike/phishing OK only when MuseBook is the real one and the fake is the problem.
+- You MAY rewrite the headline into a sharper clickbait line (same facts).
 - NEVER include any URL / link / musenews.lol path.
-- NEVER write in ALL CAPS except the tag (BREAKING / JUST IN) and tickers like $META.
+- NEVER write the whole post in ALL CAPS. Tags like BREAKING / JUST IN / SCOOP may be caps.
 - No hashtags. No "like if". No questions. No question marks. No soft musings. No em dashes.
 - Angle: ${angle}
 - Tone: ${tone}
-- ${isBreaking ? 'Prefer opening with BREAKING: or JUST IN:' : 'News bulletin energy — still concrete.'}
 - Return ONLY the post text. Statement only — never end with a question.`;
 
   const authors = Array.isArray(article.source_authors) ? article.source_authors.filter(Boolean).slice(0, 4) : [];
@@ -663,12 +684,14 @@ Rules:
     dek ? `Dek: ${dek}` : '',
     `Section: ${article.section || 'news'}`,
     authors.length ? `Named muses in story: ${authors.join(', ')}` : '',
-    'Wire examples (match the energy, not the words):',
-    '- BREAKING: MuseBook trading floor just went live',
-    '- JUST IN: Meta named in a tip that sent MuseBook flying',
-    '- MuseNews: town hall sealed the new declaration',
-    '- MuseNews: Wynjr stepped away from the desk mid-shift',
-    '- JUST IN: Life Saver pinned a new alarm row for the lobby',
+    'Clickbait wire examples (match the ENERGY, not the words):',
+    '- BREAKING: the peach that almost broke the town just dropped',
+    '- JUST IN: one letter from ruin, and the lobby saw it first',
+    '- SCOOP: Wynjr stepped away mid-shift and the boards noticed',
+    '- EXCLUSIVE: Life Saver pinned the alarm row the town was missing',
+    '- DEVELOPING: town hall just put a burn question on the table',
+    '- MuseNews: they almost clicked, then the receipt hit',
+    '- BREAKING: lookalike handle running crates against the real MuseBook',
     recentLines ? `Do not sound like these recent posts:\n${recentLines}` : '',
   ]
     .filter(Boolean)
@@ -679,7 +702,7 @@ Rules:
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    { temperature: 1.05, max_tokens: 800 },
+    { temperature: 1.15, max_tokens: 800 },
   );
 
   // Strip any leaked URLs from the main post
@@ -690,36 +713,43 @@ Rules:
     .trim();
 
   if (!text) {
-    text = isBreaking ? `BREAKING: ${title}` : `MuseNews: ${title}`;
+    text = `${preferTag} ${title}`;
   }
 
   // Normalize brand / breaking prefixes; uncaps the headline body
   text = text.replace(
-    /^((?:BREAKING|JUST IN|MuseNews|MUSENEWS):\s*)([^\n]+)/i,
+    /^((?:BREAKING|JUST IN|SCOOP|EXCLUSIVE|DEVELOPING|MuseNews|MUSENEWS):\s*)([^\n]+)/i,
     (_, prefix, headline) => {
-      const tag = /^breaking:/i.test(prefix)
+      const p = String(prefix).toUpperCase();
+      const tag = p.startsWith('BREAKING')
         ? 'BREAKING: '
-        : /^just in:/i.test(prefix)
+        : p.startsWith('JUST IN')
           ? 'JUST IN: '
-          : 'MuseNews: ';
+          : p.startsWith('SCOOP')
+            ? 'SCOOP: '
+            : p.startsWith('EXCLUSIVE')
+              ? 'EXCLUSIVE: '
+              : p.startsWith('DEVELOPING')
+                ? 'DEVELOPING: '
+                : 'MuseNews: ';
       return `${tag}${uncapsHeadline(headline)}`;
     },
   );
-  if (!/^(BREAKING|JUST IN|MuseNews):/i.test(text)) {
+  if (!/^(BREAKING|JUST IN|SCOOP|EXCLUSIVE|DEVELOPING|MuseNews):/i.test(text)) {
     const letters = text.replace(/[^A-Za-z]/g, '');
     const upper = (letters.match(/[A-Z]/g) || []).length;
     if (letters.length >= 8 && upper / letters.length >= 0.72) text = uncapsHeadline(text);
-    text = `${isBreaking ? 'BREAKING' : 'MuseNews'}: ${text}`;
+    text = `${preferTag} ${text}`;
   }
   text = trimToTweet(text, null, 160);
   if (runsDownMuseBook(text)) {
-    const fallback = trimToTweet(`${isBreaking ? 'BREAKING' : 'MuseNews'}: ${title}`, null, 160);
+    const fallback = trimToTweet(`${preferTag} ${title}`, null, 160);
     text = runsDownMuseBook(fallback) ? '' : fallback;
     if (!text) throw new Error('refusing to post a hit on MuseBook');
     console.log('[x] rewrote post that ran down MuseBook');
   }
 
-  console.log(`[x] mode: news · angle: ${angle} · tone: ${tone}`);
+  console.log(`[x] mode: news · angle: ${angle} · tone: ${tone} · tag=${preferTag}`);
 
   savePostState({
     recentAngles: [...(postState.recentAngles || []), angle],
@@ -1304,11 +1334,19 @@ async function runCycle(page) {
     );
     const generated = await generateWithRetry(() => generateNewsPost(article));
     text = generated.text;
-    newsCover = generated.coverUrl || article.cover_url || null;
+    const availableCover = generated.coverUrl || article.cover_url || null;
+    // Only some posts get a cover — text-first desk.
+    if (availableCover && (article.section === 'breaking' ? chance(Math.min(1, COVER_CHANCE + 0.15)) : chance(COVER_CHANCE))) {
+      newsCover = availableCover;
+    } else {
+      newsCover = null;
+      if (availableCover) console.log(`[x] skipping cover this post (chance=${COVER_CHANCE})`);
+    }
   }
 
   console.log('\n--- post ---\n' + text + '\n------------\n');
   if (newsCover) console.log('[x] will attach cover:', newsCover.slice(0, 100));
+  else console.log('[x] text-only post (no cover)');
   if (DRY_RUN) return;
 
   if (newsCover) {
@@ -1317,11 +1355,15 @@ async function runCycle(page) {
     await publishTweet(page, text);
   }
 
-  // After a successful post, optionally clear one mention. Failures never undo the post.
-  try {
-    await answerNotifications(page, { maxReplies: 1, label: 'mentions (after post)' });
-  } catch (error) {
-    console.error('[x] post-cycle mentions failed (ignored):', error instanceof Error ? error.message : error);
+  // After a successful post, sometimes clear one mention (sparse — not every cycle).
+  if (chance(REPLY_AFTER_POST_CHANCE)) {
+    try {
+      await answerNotifications(page, { maxReplies: 1, label: 'mentions (after post)' });
+    } catch (error) {
+      console.error('[x] post-cycle mentions failed (ignored):', error instanceof Error ? error.message : error);
+    }
+  } else {
+    console.log(`[x] skipping after-post mentions (chance=${REPLY_AFTER_POST_CHANCE})`);
   }
 }
 
